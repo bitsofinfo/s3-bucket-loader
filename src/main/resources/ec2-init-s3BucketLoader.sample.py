@@ -75,7 +75,7 @@ groupname = 'whatever'
 gid = '400'
 
 ##################################
-END
+# END
 ##################################
 
 def signal_handler(signal, frame):
