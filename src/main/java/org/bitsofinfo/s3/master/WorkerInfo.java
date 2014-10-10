@@ -20,6 +20,9 @@ public class WorkerInfo {
 	private String ip = null;
 	private int totalWritten = 0;
 	private int totalValidated = 0;
+	private int totalWriteFailures = 0;
+	private int totalValidateFailures = 0;
+	
 	private Map<Date,CCPayload> payloadsReceived = new HashMap<Date,CCPayload>();
 	private List<CCPayload> orderedPayloadsReceived = new ArrayList<CCPayload>();
 	
@@ -67,14 +70,30 @@ public class WorkerInfo {
 			this.currentMode = CCMode.valueOf(payload.value.toString());
 		}
 		
+		
 		if (payload.type == CCPayloadType.WORKER_WRITES_FINISHED_SUMMARY) {
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalWritten = writeSummary.total;
+			this.totalWriteFailures = writeSummary.failed;
 		}
 		
 		if (payload.type == CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY) {
 			ResultSummary validateSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalValidated = validateSummary.total;
+			this.totalValidateFailures = validateSummary.failed;
+		}
+		
+		
+		if (payload.type == CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY) {
+			ResultSummary validateSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
+			this.totalValidated = validateSummary.total;
+			this.totalValidateFailures = validateSummary.failed;
+		}
+		
+		if (payload.type == CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY) {
+			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
+			this.totalWritten = writeSummary.total;
+			this.totalWriteFailures = writeSummary.failed;
 		}
 	}
 	
@@ -91,6 +110,24 @@ public class WorkerInfo {
 			return orderedPayloadsReceived.get(orderedPayloadsReceived.size()-1);
 		}
 		return null;
+	}
+	
+	
+	public boolean writingCurrentSummaryReceived() {
+		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
+			return true;
+		}
+		
+		return false;
+	}
+	
+	
+	public boolean validationsCurrentSummaryReceived() {
+		if (payloadReceived(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY)) {
+			return true;
+		}
+		
+		return false;
 	}
 
 	
@@ -125,6 +162,32 @@ public class WorkerInfo {
 		
 		return false;
 	}
+	
+	
+	public boolean writeCurrentSummaryHasFailures() {
+		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
+			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
+			if (writeSummary.failed > 0) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	public boolean validationCurrentSummaryHasFailures() {
+		if (payloadReceived(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY)) {
+			CCPayload payload = getPayload(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY);
+			ResultSummary validationsSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
+			if (validationsSummary.failed > 0) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	
 	public boolean validationIsComplete() {
 		if (payloadReceived(CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY)) {

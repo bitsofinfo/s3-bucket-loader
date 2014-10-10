@@ -140,6 +140,16 @@ public class WorkerRegistry {
 		return false;
 	}
 	
+	public boolean anyWorkerCurrentWriteSummariesReceived() {
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.writingCurrentSummaryReceived()) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	public boolean anyWorkerErrorReportsAreReceived() {
 		for (WorkerInfo wi : registry.values()) {
 			if (wi.errorReportIsReceived()) {
@@ -160,6 +170,16 @@ public class WorkerRegistry {
 		return false;
 	}
 	
+	public boolean anyWorkerCurrentValidationSummariesReceived() {
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.validationsCurrentSummaryReceived()) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	public boolean anyWorkerWritesContainErrors() {
 		for (WorkerInfo wi : registry.values()) {
 			if (wi.writeSummaryHasFailures()) {
@@ -170,9 +190,29 @@ public class WorkerRegistry {
 		return false;
 	}
 	
+	public boolean anyWorkerCurrentSummaryWritesContainErrors() {
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.writeCurrentSummaryHasFailures()) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	public boolean anyWorkerValidationsContainErrors() {
 		for (WorkerInfo wi : registry.values()) {
 			if (wi.validationSummaryHasFailures()) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	public boolean anyWorkerCurrentValidationsContainErrors() {
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.validationCurrentSummaryHasFailures()) {
 				return true;
 			}
 		}

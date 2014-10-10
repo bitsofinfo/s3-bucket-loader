@@ -131,6 +131,37 @@ public class TOCQueue implements Runnable {
 		this.sqsClient.sendMessage(this.tocQueueUrl, gson.toJson(payload));
 	}
 	
+	public int emptyTOCQueue() {
+		try {
+			logger.trace("emptyTOCQueue() attempting to purge all messages from the TOCQueue!");
+			
+			int totalRemoved = 0;
+			
+			// to empty it we will just consume all the messages
+			ReceiveMessageRequest req = new ReceiveMessageRequest();
+			req.setQueueUrl(this.tocQueueUrl);
+			req.setVisibilityTimeout(900); // 15 minutes it will be invisible to other consumers
+			req.setMaxNumberOfMessages(10);
+			
+			ReceiveMessageResult msgResult = sqsClient.receiveMessage(req);
+			List<Message> messages = msgResult.getMessages();
+
+			for (Message msg : messages) {
+				totalRemoved++;
+				// delete the message, got here no exception
+				sqsClient.deleteMessage(tocQueueUrl, msg.getReceiptHandle());
+			}
+			
+			logger.trace("emptyTOCQueue() purging completed!");
+			return totalRemoved;
+			
+		} catch(Exception e) {
+			logger.error("Error in emptyTOCQueue(): " + e.getMessage(),e);
+		}
+		
+		return 0;
+	}
+	
 	public void run() {
 		
 		while(this.running) {

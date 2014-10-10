@@ -53,6 +53,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	
 	private long initializedLastSentAtMS = -1;
 	
+	private long sendCurrentSummariesEveryMS = 60000;
+	private long currentSummaryLastSentAtMS = -1;
+	
 	public Worker(Properties props) {
 
 		try {
@@ -256,6 +259,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 				// if now in REPORT_ERRORS mode...
 				if (myWorkerState.getCurrentMode() == CCMode.REPORT_ERRORS) {
 					
+					// ensure we are paused consuming..
+					this.pauseConsuming();
+					
 					// build report...
 					ErrorReport errorReport = new ErrorReport();
 					errorReport.failedValidates = myWorkerState.getFilePathValidateFailures();
@@ -335,6 +341,27 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	}
 	
 
+	private String getResultsSummaryAsJSON(MODE mode) {
+		
+		if (mode == MODE.WRITE) {
+			ResultSummary writeSummary = new ResultSummary(myWorkerState.getTotalWritesOK(), 
+														   myWorkerState.getTotalWritesFailed(), 
+														   myWorkerState.getTotalWritesProcessed());
+	
+			return gson.toJson(writeSummary);
+			
+			
+		} else if (mode == MODE.VALIDATE) {
+			
+			ResultSummary validateSummary = new ResultSummary(myWorkerState.getTotalValidatesOK(), 
+					   									  	  myWorkerState.getTotalValidatesFailed(), 
+					   									  	  myWorkerState.getTotalValidationsProcessed());
+
+			return gson.toJson(validateSummary);
+		}
+		
+		throw new RuntimeException("getResultsSummaryAsJSON() called with invalid MODE: " + mode);
+	}
 	
 	public void run() {
 		
@@ -383,11 +410,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 							continue;
 						}
 						
-						ResultSummary writeSummary = new ResultSummary(myWorkerState.getTotalWritesOK(), 
-																	   myWorkerState.getTotalWritesFailed(), 
-																	   myWorkerState.getTotalWritesProcessed());
-						
-						String asJson = gson.toJson(writeSummary);
+						String asJson = getResultsSummaryAsJSON(MODE.WRITE);
 						
 						// pause
 						this.pauseConsuming();
@@ -398,6 +421,17 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						// state we are IDLE
 						this.myWorkerState.setCurrentMode(CCMode.IDLE);
 						this.controlChannel.send(false, CCPayloadType.WORKER_CURRENT_MODE, CCMode.IDLE);
+						
+						
+					// not finished but lets send a CURRENT_SUMMARY, if necessary
+					} else {
+						long now = System.currentTimeMillis();;
+						if ((now - this.currentSummaryLastSentAtMS) > this.sendCurrentSummariesEveryMS) {
+							// send out our summary
+							this.currentSummaryLastSentAtMS = now;
+							String asJson = getResultsSummaryAsJSON(MODE.WRITE);
+							this.controlChannel.send(false, CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY, asJson);
+						}
 					}
 				}
 				
@@ -415,11 +449,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					if (this.tocQueueConsumers.size() == this.totalConsumerThreads &&
 						threadsThatQualify >= this.tocQueueConsumers.size()) {
 						
-						ResultSummary writeSummary = new ResultSummary(myWorkerState.getTotalValidatesOK(), 
-																	   myWorkerState.getTotalValidatesFailed(), 
-																	   myWorkerState.getTotalValidationsProcessed());
-						
-						String asJson = gson.toJson(writeSummary);
+						String asJson = getResultsSummaryAsJSON(MODE.VALIDATE);
 						
 						// pause
 						this.pauseConsuming();
@@ -430,6 +460,17 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						// state we are IDLE
 						this.myWorkerState.setCurrentMode(CCMode.IDLE);
 						this.controlChannel.send(false, CCPayloadType.WORKER_CURRENT_MODE, CCMode.IDLE);
+						
+						
+					// not finished but lets send a CURRENT_SUMMARY
+					} else {
+						long now = System.currentTimeMillis();;
+						if ((now - this.currentSummaryLastSentAtMS) > this.sendCurrentSummariesEveryMS) {
+							// send out our summary
+							this.currentSummaryLastSentAtMS = now;
+							String asJson = getResultsSummaryAsJSON(MODE.VALIDATE);
+							this.controlChannel.send(false, CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY, asJson);
+						}
 					}
 				}
 				

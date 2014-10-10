@@ -25,6 +25,7 @@ import com.amazonaws.services.sns.model.Topic;
 import com.amazonaws.services.sqs.AmazonSQSClient;
 import com.amazonaws.services.sqs.model.CreateQueueResult;
 import com.amazonaws.services.sqs.model.Message;
+import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
 import com.amazonaws.services.sqs.model.ReceiveMessageResult;
 import com.amazonaws.services.sqs.model.SetQueueAttributesRequest;
 import com.google.gson.Gson;
@@ -215,7 +216,13 @@ public class ControlChannel implements Runnable {
 		while(running) {
 			
 			try {
-				ReceiveMessageResult msgResult = sqsClient.receiveMessage(sqsQueueUrl);
+				
+				ReceiveMessageRequest req = new ReceiveMessageRequest();
+				req.setMaxNumberOfMessages(10);
+				req.setVisibilityTimeout(300);
+				req.setQueueUrl(sqsQueueUrl);
+				
+				ReceiveMessageResult msgResult = sqsClient.receiveMessage(req);
 				List<Message> messages = msgResult.getMessages();
 				
 				for (Message msg : messages) {

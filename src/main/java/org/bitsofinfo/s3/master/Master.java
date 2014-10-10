@@ -50,8 +50,14 @@ public class Master implements CCPayloadHandler, Runnable {
 	
 	private CCMode currentMode = null;
 	
-	private Gson gson = new Gson();
+
 	private Date masterStartAt = null;
+	private Date validationsStartAt = null;
+	private Date validationsEndAt = null;
+	private Date writesStartAt = null;
+	private Date writesEndAt = null;
+	
+	private Gson gson = new Gson();
 	private String awsAccessKey = null;
 	private String awsSecretKey = null;
 	
@@ -69,6 +75,8 @@ public class Master implements CCPayloadHandler, Runnable {
 	private int tocDispatchThreadsTotal = 4;
 	
 	private Ec2Util ec2util = null;
+	
+	private boolean failfastOnWorkerCurrentSummaryError = false;
 
 	public Master(Properties props) {
 		
@@ -87,6 +95,8 @@ public class Master implements CCPayloadHandler, Runnable {
 			this.awsSecretKey = 		 props.getProperty("aws.secret.key");
 			
 			this.tocDispatchThreadsTotal = Integer.valueOf(props.getProperty("master.tocqueue.dispatch.threads"));
+			
+			this.failfastOnWorkerCurrentSummaryError = Boolean.valueOf(props.getProperty("master.failfast.on.worker.current.summary.error"));
 
 			tocQueue = 		 new TOCQueue(false, awsAccessKey, awsSecretKey, sqsQueueName, null);
 			controlChannel = new ControlChannel(true, awsAccessKey, awsSecretKey, snsControlTopicName, userAccountPrincipalId, userARN, this);
@@ -238,12 +248,14 @@ public class Master implements CCPayloadHandler, Runnable {
 			return;
 		}
 		
-		logger.info("handlePayload() received CCPayload: fromMaster: " + payload.fromMaster + 
+		logger.trace("handlePayload() received CCPayload: fromMaster: " + payload.fromMaster + 
 				" sourceHostId:" + payload.sourceHostId + 
 				" sourceHostIp:" + payload.sourceHostIP + 
 				" onlyForHost:" + payload.onlyForHostIdOrIP + 
 				" type:" + payload.type +
 				" value:" + payload.value);
+		
+		logger.debug("received CCPayload: FROM:"+payload.sourceHostIP + " type:"+payload.type + " val:"+payload.value);
 		
 		// if from worker....
 		if (!payload.fromMaster) {
@@ -260,6 +272,7 @@ public class Master implements CCPayloadHandler, Runnable {
 
 				// execute WRITE mode
 				this.currentMode = CCMode.WRITE;
+				this.writesStartAt = new Date();
 				
 				// generate a queue that the "sender" will concurrently consume
 				// from while the TOC is being generated
@@ -301,6 +314,11 @@ public class Master implements CCPayloadHandler, Runnable {
 		// Check for WRITE complete
 		if (currentMode == CCMode.WRITE && workerRegistry.allWorkerWritesAreComplete()) {
 			try {
+			
+				// dump runtime
+				this.writesEndAt = new Date();
+				logger.info("WORKER WRITES COMPLETE:  START["+simpleDateFormat.format(writesStartAt)+"] --> END["+simpleDateFormat.format(writesEndAt)+"]");
+				
 				// were there any errors?
 				if (workerRegistry.anyWorkerWritesContainErrors()) {
 	
@@ -326,6 +344,7 @@ public class Master implements CCPayloadHandler, Runnable {
 					
 					// switch the system to VALIDATE mode so workers can immediately start polling
 					logger.info("Switching to VALIDATE mode....");
+					this.validationsStartAt = new Date();
 					this.currentMode = CCMode.VALIDATE;
 					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
 					
@@ -358,13 +377,49 @@ public class Master implements CCPayloadHandler, Runnable {
 				waitingSB.append(awaiting+"\n");
 			}
 			logger.info(waitingSB.toString()+"\n");
-		}
-		
-		
+			
+			
+		// WRITE partially complete, we have some current write summaries
+		} else if (currentMode == CCMode.WRITE && workerRegistry.anyWorkerCurrentWriteSummariesReceived()) {
+			
+			try {
+				int totalWrittenSoFar = workerRegistry.getTotalWritten();
+				logger.info("Total written across cluster so far: " + totalWrittenSoFar + " tocSize:" + this.toc.size());
+			
+				// if any current summaries contain errors....and we are in fail fast mode...
+				if (this.failfastOnWorkerCurrentSummaryError && workerRegistry.anyWorkerCurrentSummaryWritesContainErrors()) {
+					
+					logger.info("One or more workers report WRITE mode current summary with ERRORS. " +
+							"failfastOnWorkerCurrentSummaryError=true, so I am now triggering " +
+							"REPORT_ERRORS mode across all workers and stopping WRITE mode.");
+					
+					// purge the TOCQueue
+					this.purgeTOCQueueContents();
+					
+					this.currentMode = CCMode.REPORT_ERRORS;
+					
+					// switch the system to REPORT_ERRORS mode
+					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
+				}
+			} catch(Exception e) {
+				logger.error("handlePayload() error in WRITE reaction to current" +
+						" summaries received with ERRORS over control channel " + e.getMessage(),e);
+			}
+				
+		}	
+			
+			
+			
 		// Check for WRITE complete
 		if (currentMode == CCMode.VALIDATE && workerRegistry.allWorkerValidatesAreComplete()) {
 			
 			try {
+				
+				// dump runtime
+				this.validationsEndAt = new Date();
+				logger.info("WORKER VALIDATIONS COMPLETE:  START["+simpleDateFormat.format(validationsStartAt)+"] --> END["+simpleDateFormat.format(validationsEndAt)+"]");
+				
+				
 				// were there any errors?
 				if (workerRegistry.anyWorkerValidationsContainErrors()) {
 	
@@ -385,7 +440,7 @@ public class Master implements CCPayloadHandler, Runnable {
 							" I am now issueing CMD_WORKER_SHUTDOWN");
 					
 					// dump runtime
-					logger.info("MASTER RUNTIME:  START["+simpleDateFormat.format(masterStartAt)+"] --> END["+simpleDateFormat.format(new Date())+"]");
+					dumpRuntimeInfo();
 					
 					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, null);
 				}
@@ -394,14 +449,47 @@ public class Master implements CCPayloadHandler, Runnable {
 				logger.error("handlePayload() error sending CMD_WORKER_SHUTDOWN over control channel " + e.getMessage(),e);
 			}
 			
+			
+			
 		// VALIDATE partially complete? dump the workers we are waiting on....
 		} else if (currentMode == CCMode.VALIDATE && workerRegistry.anyWorkerValidatesAreComplete()) {
+			
 			StringBuffer waitingSB = new StringBuffer("\nWe are awaiting VALIDATE reports from the following workers:\n");
 			for (String awaiting : workerRegistry.getWorkersAwaitingValidationReport()) {
 				waitingSB.append(awaiting+"\n");
 			}
 			logger.info(waitingSB.toString()+"\n");
-		}
+			
+			
+			
+		// VALIDATE partially complete, we have some current write summaries
+		} else if (currentMode == CCMode.VALIDATE && workerRegistry.anyWorkerCurrentValidationSummariesReceived()) {
+			
+			try {
+				int totalValidatedSoFar = workerRegistry.getTotalValidated();
+				logger.info("Total validated across cluster so far: " + totalValidatedSoFar + " tocSize:" + this.toc.size());
+			
+				// if any current summaries contain errors....and we are in fail fast mode...
+				if (this.failfastOnWorkerCurrentSummaryError && workerRegistry.anyWorkerCurrentValidationsContainErrors()) {
+					
+					logger.info("One or more workers report VALIDATE mode current summary with ERRORS. " +
+							"failfastOnWorkerCurrentSummaryError=true, so I am now triggering " +
+							"REPORT_ERRORS mode across all workers and stopping VALIDATE mode.");
+					
+					// purge the TOCQueue
+					this.purgeTOCQueueContents();
+					
+					this.currentMode = CCMode.REPORT_ERRORS;
+					
+					// switch the system to REPORT_ERRORS mode
+					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
+				}
+			} catch(Exception e) {
+				logger.error("handlePayload() error in WRITE reaction to current" +
+						" summaries received with ERRORS over control channel " + e.getMessage(),e);
+			}
+				
+		}	
 		
 		
 		// Check for REPORT_ERRORS complete
@@ -431,7 +519,7 @@ public class Master implements CCPayloadHandler, Runnable {
 				}
 				
 				// dump runtime
-				logger.info("MASTER RUNTIME:  START["+simpleDateFormat.format(masterStartAt)+"] --> END["+simpleDateFormat.format(new Date())+"]");
+				dumpRuntimeInfo();
 				
 				// send out the shutdown..
 				this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, null);
@@ -447,6 +535,19 @@ public class Master implements CCPayloadHandler, Runnable {
 				waitingSB.append(awaiting+"\n");
 			}
 			logger.info(waitingSB.toString()+"\n");
+		}
+	}
+	
+	private void dumpRuntimeInfo() {
+		// dump runtime
+		logger.info("MASTER TOTAL RUNTIME:  START["+simpleDateFormat.format(masterStartAt)+"] --> END["+simpleDateFormat.format(new Date())+"]");
+		
+		if (writesEndAt != null) {
+			logger.info("WRITE RUNTIME:  START["+simpleDateFormat.format(writesStartAt)+"] --> END["+simpleDateFormat.format(writesEndAt)+"]");
+		}
+		
+		if (validationsEndAt != null) {
+			logger.info("VALIDATION RUNTIME:  START["+simpleDateFormat.format(validationsStartAt)+"] --> END["+simpleDateFormat.format(validationsEndAt)+"]");
 		}
 	}
 	
@@ -467,12 +568,12 @@ public class Master implements CCPayloadHandler, Runnable {
 						}
 					}
 					
-					// if its been more than 5 minutes since we started and we STILL
+					// if its been more than 10 minutes since we started and we STILL
 					// have ec2 instances that have yet to report their worker, kill THEM!
 					// and decrement expected workers so the next INITIALIZE resend by workers
 					// will get us moving forward.
-					if (System.currentTimeMillis() - this.masterStartAt.getTime() > (60000*5)) {
-						logger.debug("Its been more than 5 minutes since we've started and are short workers... terminating them");
+					if (System.currentTimeMillis() - this.masterStartAt.getTime() > (60000*10)) {
+						logger.debug("Its been more than 10 minutes since we've started and are short workers... terminating them");
 						for (String instanceId2term : ec2InstanceIdsNoInitializedWorker) {
 							
 							// issue shutdown to them only first
@@ -491,6 +592,23 @@ public class Master implements CCPayloadHandler, Runnable {
 			} catch(Exception e) {
 				logger.error("Unexpected error: " + e.getMessage(),e);
 			}
+		}
+	}
+	
+	private void purgeTOCQueueContents() {
+		try {
+			TOCQueueEmptier emptier = new TOCQueueEmptier(this.tocQueue, this.tocDispatchThreadsTotal);
+			emptier.start();
+			
+			// give it a few seconds to clean it
+			while (emptier.isRunning()) {
+				Thread.currentThread().sleep(1000);
+			}
+			
+			// done!
+			
+		} catch(Exception e) {
+			logger.error("Unexpected error purging TOC contents: "+e.getMessage(),e);
 		}
 	}
 	
