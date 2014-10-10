@@ -13,6 +13,6 @@ public interface SourceTOCGenerator {
 	 * @return
 	 * @throws Exception
 	 */
-	public Set<FileInfo> generateTOC(Queue<FileInfo> tocQueue) throws Exception;
+	public Set<TocInfo> generateTOC(Queue<TocInfo> tocQueue) throws Exception;
 	
 }

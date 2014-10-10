@@ -19,7 +19,7 @@ import org.bitsofinfo.s3.control.CCPayloadHandler;
 import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
 import org.bitsofinfo.s3.toc.DirectoryCrawler;
-import org.bitsofinfo.s3.toc.FileInfo;
+import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.SourceTOCGenerator;
 import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
@@ -43,7 +43,7 @@ public class Master implements CCPayloadHandler, Runnable {
 	private ControlChannel controlChannel = null;
 	private Properties props = null;
 	
-	private Set<FileInfo> toc = null;
+	private Set<TocInfo> toc = null;
 	
 	private WorkerRegistry workerRegistry = new WorkerRegistry();
 	private int totalExpectedWorkers = 0;
@@ -175,7 +175,7 @@ public class Master implements CCPayloadHandler, Runnable {
 		
 	}
 
-	public Set<FileInfo> generateTOC(TOCPayload.MODE payloadMode, Queue<FileInfo> tocFileInfoQueue) throws Exception {
+	public Set<TocInfo> generateTOC(TOCPayload.MODE payloadMode, Queue<TocInfo> tocFileInfoQueue) throws Exception {
 		
 		SourceTOCGenerator tocGenerator = getSourceTOCGenerator(props);
 
@@ -276,7 +276,7 @@ public class Master implements CCPayloadHandler, Runnable {
 				
 				// generate a queue that the "sender" will concurrently consume
 				// from while the TOC is being generated
-				Queue<FileInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<FileInfo>();
+				Queue<TocInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
 				this.tocFileInfoQueueSender = new TOCFileInfoQueueSender(MODE.WRITE, this.tocQueue, this.tocDispatchThreadsTotal, tocFileInfoQueue);
 				
 				// switch the system to WRITE mode so workers can immediately start polling
@@ -339,7 +339,7 @@ public class Master implements CCPayloadHandler, Runnable {
 							"(expected size). I am now triggering VALIDATE mode across all workers");
 					
 					// put our cached TOC into a conccurent queue
-					Queue<FileInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<FileInfo>();
+					Queue<TocInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
 					tocFileInfoQueue.addAll(this.toc);
 					
 					// switch the system to VALIDATE mode so workers can immediately start polling

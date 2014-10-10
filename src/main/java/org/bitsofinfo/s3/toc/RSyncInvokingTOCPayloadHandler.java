@@ -1,11 +1,17 @@
 package org.bitsofinfo.s3.toc;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.exec.CommandLine;
 import org.apache.log4j.Logger;
+import org.bitsofinfo.s3.cmd.CmdResult;
 import org.bitsofinfo.s3.cmd.CommandExecutor;
-import org.bitsofinfo.s3.cmd.CommandExecutor.CmdResult;
 import org.bitsofinfo.s3.cmd.FilePathOpResult;
 import org.bitsofinfo.s3.worker.WorkerState;
 
@@ -14,10 +20,12 @@ import com.google.gson.Gson;
 public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 
 	private static final Logger logger = Logger.getLogger(RSyncInvokingTOCPayloadHandler.class);
-	
+
 	private CommandExecutor executor = null;
 	private String sourceDirectoryRootPath = null;
 	private String targetDirectoryRootPath = null;
+	private String chown = null;
+	private String chmod = null;
 	
 	private Gson gson = new Gson();
 	
@@ -28,114 +36,177 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 	public void handlePayload(TOCPayload payload, WorkerState workerState) throws Exception {
 		
 
-		String sourcePath = (sourceDirectoryRootPath + payload.fileInfo.getFilePath()).replaceAll("//", "/");
-		String targetPath = (targetDirectoryRootPath + payload.fileInfo.getFilePath()).replaceAll("//", "/");
+		String sourceFilePath = (sourceDirectoryRootPath + payload.tocInfo.getPath()).replaceAll("//", "/");
+		String targetFilePath = (targetDirectoryRootPath + payload.tocInfo.getPath()).replaceAll("//", "/");
 		
-		boolean overallSuccess = true;
+		// we need this for mkdirs..
+		String targetDirPath = null;
+		if (payload.tocInfo.isDirectory()) {
+			targetDirPath = targetFilePath;
+		} else {
+			// get the parent dir of the file
+			targetDirPath = targetFilePath.substring(0,targetFilePath.lastIndexOf('/')); 
+		}
+
+		List<CmdResult> commandsRun = new ArrayList<CmdResult>();
 		
 		/**
-		 * MKDIR
+		 * MKDIR against targetDirPath
 		 */
-		String mkdirCmd = null;
-		CmdResult mkdirResult = null;
-		try {
-			
-			// quote the path for files w/ spaces
-			String dirPath = targetPath.substring(0,targetPath.lastIndexOf('/'));
-			
-			
-			// mkdir -p targetPath
-			CommandLine mkdirCmdLine = new CommandLine("mkdir");
-			mkdirCmdLine.addArgument("-p");
-			mkdirCmdLine.addArgument(dirPath,false);
-			
-			mkdirCmd = mkdirCmdLine.toString();
-			
-			// try mkdir specifically 3 times, I've seen it silently succeed
-			// and its like the cmd never made it to yas3fs
-			File dirFile = new File(dirPath);
-			int attempts = 0;
-			int maxAttempts = 3;
-			
-			while((mkdirResult == null || mkdirResult.getExitCode() > 0 || !dirFile.exists())
-					&& 
-				  (attempts < maxAttempts)) {
-				
-				attempts++;
-				logger.debug("handlePayload() attempt#: "+attempts+ " executing mkdir: " + mkdirCmd);
-				
-				mkdirResult = executor.execute(mkdirCmdLine,3);
-			}
-			
-			String resultAsJson = gson.toJson(mkdirResult);
-			
-			if (mkdirResult.getExitCode() > 0) {
-				workerState.addFilePathWriteFailure(
-						new FilePathOpResult(payload.mode, false, targetPath, mkdirCmd, resultAsJson));
-				overallSuccess = false;
-			}
-			
-		} catch(Exception e) {
-			workerState.addFilePathWriteFailure(
-					new FilePathOpResult(payload.mode, false, targetPath, mkdirCmd, "exception: " + e.getMessage()));
-			
-			logger.error("File mkdir exception: " +mkdirCmd + " " + e.getMessage(),e);
-			
-			overallSuccess = false;
-		}
-		
-		if (!overallSuccess) {
+		// mkdir -p targetDirPath
+		CommandLine mkdirCmdLine = new CommandLine("mkdir");
+		mkdirCmdLine.addArgument("-p");
+		mkdirCmdLine.addArgument(targetDirPath,false);
+
+		CmdResult mkdirResult = exec(1,"mkdir",mkdirCmdLine,targetDirPath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+		commandsRun.add(mkdirResult);
+		if (mkdirResult.getExitCode() > 0) {
 			return; // exit
 		}
 			
 		/**
-		 * RSYNC
+		 * RSYNC (files only)
 		 */
-		String rsyncCmd = null;
-		CmdResult rsyncResult = null;
-		try {
-
+		if (!payload.tocInfo.isDirectory()) {
+			/*
 			// rsync --inplace -avz sourcePath targetPath
 			CommandLine rsyncCmdLine = new CommandLine("rsync");
-			rsyncCmdLine.addArgument("--inplace");
-			rsyncCmdLine.addArgument("-avz");
-			rsyncCmdLine.addArgument(sourcePath,false);
-			rsyncCmdLine.addArgument(targetPath,false);
+			rsyncCmdLine.addArgument("--inplace"); 
+			//rsyncCmdLine.addArgument("-avz");
+			rsyncCmdLine.addArgument("-vz");
+			rsyncCmdLine.addArgument(sourceFilePath,false);
+			rsyncCmdLine.addArgument(targetFilePath,false);
 			
-			rsyncCmd = rsyncCmdLine.toString();
-			
-			logger.debug("handlePayload() executing RSYNC: " + rsyncCmd);
-			rsyncResult = executor.execute(rsyncCmdLine,3);
-			
-			String resultAsJson = gson.toJson(rsyncResult);
-			
+			CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			commandsRun.add(rsyncResult);
 			if (rsyncResult.getExitCode() > 0) {
-				workerState.addFilePathWriteFailure(
-						new FilePathOpResult(payload.mode, false, targetPath, rsyncCmd, resultAsJson));
-				overallSuccess = false;
+				return; // exit
+			}*/
+			
+			CommandLine rsyncCmdLine = new CommandLine("cp");
+			rsyncCmdLine.addArgument(sourceFilePath,false);
+			rsyncCmdLine.addArgument(targetFilePath,false);
+			
+			CmdResult rsyncResult = exec(1,"cp",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			commandsRun.add(rsyncResult);
+			if (rsyncResult.getExitCode() > 0) {
+				return; // exit
 			}
 			
-		} catch(Exception e) {
+		}
+		
+		
+		/********************
+		 * HANDLE CHOWNS
+		 * AND CHMOD for
+		 * both files and dirs
+		 * why? because w/ yas3fs
+		 * "preserve" options do not
+		 * properly carry through
+		 * to s3, it needs to be explicit
+		 *****************/
+
+		/**
+		 * CHOWN 
+		 */
+		CmdResult chownResult  = null;
+		if (chown != null) {
 			
-			workerState.addFilePathWriteFailure(
-					new FilePathOpResult(payload.mode, false, targetPath, rsyncCmd, "exception: " + e.getMessage()));
+			// chown -R x:y targetFilePath
+			CommandLine chownCmdLine = new CommandLine("chown");
+			chownCmdLine.addArgument(this.chown);
+			chownCmdLine.addArgument(targetFilePath,false);
 			
-			logger.error("File rsync exception: " +rsyncCmd + " " + e.getMessage(),e);
-			
-			overallSuccess = false;
+			chownResult = exec(1,"chown",chownCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			commandsRun.add(chownResult);
+			if (chownResult.getExitCode() > 0) {
+				return; // exit
+			}
 		}
 		
 		
 		/**
-		 * Record success
+		 * CHMOD
 		 */
-		if (overallSuccess) {
-			String asJson = gson.toJson(new CmdResult[]{mkdirResult,rsyncResult});
+		CmdResult chmodResult  = null;
+		if (chmod != null) {
 			
-			workerState.addFilePathWritten(
-					new FilePathOpResult(payload.mode, true, targetPath, "mkdir + rsync", asJson));
+			// chmod -R XXX targetFilePath
+			CommandLine chmodCmdLine = new CommandLine("chmod");
+			chmodCmdLine.addArgument(this.chmod);
+			chmodCmdLine.addArgument(targetFilePath,false);
+			
+			chmodResult = exec(1,"chmod",chmodCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			commandsRun.add(chmodResult);
+			if (chmodResult.getExitCode() > 0) {
+				return; // exit
+			}
+			
 		}
 		
+	
+		/**
+		 * Record success if we got here
+		 */
+
+		String asJson = gson.toJson(commandsRun.toArray());
+		
+		workerState.addFilePathWritten(
+				new FilePathOpResult(payload.mode, true, targetFilePath, "mkdir + rsync + ?chown + ?chmod", asJson));
+
+		
+	}
+	
+	
+	private CmdResult exec(int maxAttempts, 
+						   String desc, 
+						   CommandLine cmd, 
+						   String retryExistancePathToCheck, 
+						   String sourceFilePath, 
+						   String targetDirPath, 
+						   String targetFilePath, 
+						   WorkerState workerState, 
+						   TOCPayload payload) {
+		
+		String cmdStr = null;
+		CmdResult result = null;
+		try {
+			cmdStr = cmd.toString();
+
+			File retryExistanceCheckFile = new File(retryExistancePathToCheck);
+			int attempts = 0;
+			
+			while((attempts < maxAttempts) && 
+				  (result == null || result.getExitCode() > 0 || !retryExistanceCheckFile.exists())) {
+				
+				attempts++;
+				logger.debug("exec() attempt#: "+attempts+ " executing "+desc+": " + cmdStr);
+				
+				result = executor.execute(cmd,3);
+				
+				// if fail, let it breathe
+				if (result.getExitCode() > 0) {
+					Thread.currentThread().sleep(500);
+				} 
+			}
+			
+			String resultAsJson = gson.toJson(result);
+			
+			if (result.getExitCode() > 0) {
+				workerState.addFilePathWriteFailure(
+						new FilePathOpResult(payload.mode, false, targetFilePath, cmdStr, resultAsJson));
+			}
+			
+		} catch(Exception e) {
+			workerState.addFilePathWriteFailure(
+					new FilePathOpResult(payload.mode, false, targetFilePath, cmdStr, "exception: " + e.getMessage()));
+			String msg = "File "+desc+" unexpected exception: " +cmdStr + " " + e.getMessage();
+			logger.error(msg,e);
+			 
+			result = new CmdResult(5555, null, msg);
+		}
+		
+		return result;
 	}
 
 	public void setSourceDirectoryRootPath(String sourceDirectoryRootPath) {
@@ -151,4 +222,12 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 				"support this method variant, call me through Worker");
 	}
 
+	public void setChown(String chown) {
+		this.chown = chown;
+	}
+
+	public void setChmod(String chmod) {
+		this.chmod = chmod;
+	}
+	
 }

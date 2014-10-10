@@ -7,8 +7,7 @@ import java.util.Set;
 
 
 /**
- * Returns all unique directory paths
- * which contain an actual file
+ * Returns all unique directory and file paths
  * 
  * @author inter0p
  *
@@ -30,17 +29,19 @@ public class DirectoryCrawler implements SourceTOCGenerator {
 		}
 	}
 	
-	public Set<FileInfo> generateTOC(Queue<FileInfo> tocQueue) throws Exception {
-		Set<FileInfo> toc = new HashSet<FileInfo>();
+	public Set<TocInfo> generateTOC(Queue<TocInfo> tocQueue) throws Exception {
+		Set<TocInfo> toc = new HashSet<TocInfo>();
 		scanNode(this.rootDir,toc,tocQueue);
 		return toc;
 	}
 	
-	private void scanNode(File node, Set<FileInfo> toc, Queue<FileInfo> tocQueue) throws Exception {
+	private void scanNode(File node, Set<TocInfo> toc, Queue<TocInfo> tocQueue) throws Exception {
 
-		if (node.exists() && !node.getName().startsWith(".") && node.isFile()) {
+		if (node.exists() && !node.getName().startsWith(".")) {
+			
 			String adjustedPath = node.getAbsolutePath().replace(this.rootDir.getAbsolutePath(), "");
-			FileInfo finfo = new FileInfo(adjustedPath,node.length());
+			TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
+			finfo.setIsDirectory(node.isDirectory());
 			toc.add(finfo);
 			tocQueue.add(finfo);
 		}

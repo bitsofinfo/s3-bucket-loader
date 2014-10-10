@@ -19,13 +19,19 @@ public class ValidatingTOCPayloadHandler implements TOCPayloadHandler {
 		String targetPath = null;
 		
 		try {
-			targetPath = (targetDirectoryRootPath + payload.fileInfo.getFilePath()).replaceAll("//", "/");
+			targetPath = (targetDirectoryRootPath + payload.tocInfo.getPath()).replaceAll("//", "/");
 			
 			File toCheck = new File(targetPath);
-			if (toCheck.exists() && toCheck.length() == payload.fileInfo.size) {
+			
+			if (payload.tocInfo.isDirectory() && toCheck.exists() && toCheck.isDirectory()) {
 				
 				workerState.addFilePathValidated(
-						new FilePathOpResult(payload.mode, true, targetPath, "io.File.exists()", "ok"));
+						new FilePathOpResult(payload.mode, true, targetPath, "io.File.[dir].exists()", "ok"));
+				
+			} else if (!payload.tocInfo.isDirectory() && toCheck.exists() && toCheck.length() == payload.tocInfo.size) {
+				
+				workerState.addFilePathValidated(
+						new FilePathOpResult(payload.mode, true, targetPath, "io.File.exists() + size", "ok"));
 				
 			} else {
 				logger.error("File validation failed, does not exist! " + targetPath);

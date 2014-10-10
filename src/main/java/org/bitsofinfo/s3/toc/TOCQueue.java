@@ -122,9 +122,9 @@ public class TOCQueue implements Runnable {
 		}
 	}
 	
-	public void send(FileInfo fileInfo, MODE mode) throws Exception {
+	public void send(TocInfo fileInfo, MODE mode) throws Exception {
 		TOCPayload payload = new TOCPayload();
-		payload.fileInfo = fileInfo;
+		payload.tocInfo = fileInfo;
 		payload.mode = mode;
 		
 		// send!
@@ -198,7 +198,7 @@ public class TOCQueue implements Runnable {
 							continue;
 						}
 						
-						logger.debug("TOCQueue["+myId+"] TOCPayload received: filePath:" + payload.fileInfo.getFilePath());
+						logger.debug("TOCQueue["+myId+"] TOCPayload received: filePath:" + payload.tocInfo.getPath());
 	
 						// handle
 						this.tocPayloadHandler.handlePayload(payload);

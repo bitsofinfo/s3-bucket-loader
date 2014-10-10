@@ -288,7 +288,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	}
 
 	public void handlePayload(TOCPayload payload) throws Exception {
-		logger.info("handlePayload() received TOCPayload: mode: "+payload.mode + " filePath:" + payload.fileInfo.getFilePath());
+		logger.info("handlePayload() received TOCPayload: mode: "+payload.mode + " filePath:" + payload.tocInfo.getPath());
 
 		TOCPayloadHandler handler = this.mode2TOCHandlerMap.get(payload.mode);
 		
@@ -322,6 +322,19 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			((RSyncInvokingTOCPayloadHandler)handler)
 				.setTargetDirectoryRootPath(props.getProperty("tocPayloadHandler.target.dir.root"));
+			
+			
+			String chmod = props.getProperty("tocPayloadHandler.write.rsync.chmod");
+			if (chmod != null) {
+				((RSyncInvokingTOCPayloadHandler)handler)
+				.setChmod(chmod);
+			}
+			
+			String chown = props.getProperty("tocPayloadHandler.write.rsync.chown");
+			if (chown != null) {
+				((RSyncInvokingTOCPayloadHandler)handler)
+				.setChown(chown);
+			}
 			
 			return handler;
 		}

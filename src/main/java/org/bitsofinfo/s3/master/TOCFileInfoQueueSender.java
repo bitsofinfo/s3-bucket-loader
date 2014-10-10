@@ -6,7 +6,7 @@ import java.util.Queue;
 import java.util.Random;
 
 import org.apache.log4j.Logger;
-import org.bitsofinfo.s3.toc.FileInfo;
+import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
 
@@ -16,12 +16,12 @@ public class TOCFileInfoQueueSender implements Runnable {
 	private static final Logger logger = Logger.getLogger(TOCFileInfoQueueSender.class);
 
 	private TOCQueue tocQueue = null;
-	private Queue<FileInfo> toConsumeFrom = null;
+	private Queue<TocInfo> toConsumeFrom = null;
 	private boolean running = true;
 	private List<Thread> threads = new ArrayList<Thread>();
 	private MODE mode = null;
 
-	public TOCFileInfoQueueSender(MODE mode, TOCQueue tocQueue, int totalThreads, Queue<FileInfo> toConsumeFrom) {
+	public TOCFileInfoQueueSender(MODE mode, TOCQueue tocQueue, int totalThreads, Queue<TocInfo> toConsumeFrom) {
 		this.toConsumeFrom = toConsumeFrom;
 		this.tocQueue= tocQueue;
 		this.mode = mode;
@@ -48,7 +48,7 @@ public class TOCFileInfoQueueSender implements Runnable {
 		Random rand = new Random();
 		while (running) {
 			try {
-				FileInfo finfo = toConsumeFrom.poll();
+				TocInfo finfo = toConsumeFrom.poll();
 				if (finfo != null) {
 					tocQueue.send(finfo, this.mode);
 				} else {

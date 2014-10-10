@@ -5,6 +5,6 @@ public class TOCPayload {
 	public static enum MODE {WRITE, VALIDATE}
 	
 	public MODE mode = null;
-	public FileInfo fileInfo = null;
+	public TocInfo tocInfo = null;
 	
 }
