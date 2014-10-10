@@ -3,7 +3,7 @@ s3-bucket-loader
 
 This project originated out of a need to import a massive amount of files (hundreds of gigabytes) into an AWS S3 bucket, with the ultimate intent that this bucket be managed going forward via the S3 distributed filesystem; [yas3fs](https://github.com/danilop/yas3fs). Initial attempts at doing this a traditional way, (i.e. rsyncing or copying from source to destination) quickly became impractical due to the sheer amount of time that single-threaded, and even limited multi-threaded copiers would take. 
 
-s3-bucket-loader leverages a simple master/worker paradigm to get economies of scale for copying many files from sourceA to sourceB. Even though this is coded with S3 being the ultimate destination it could be used for other targets as well. The speed at which you can import a given fileset into S3 (through yas3fs in this case) is only limited on how much money you want to spend in worker hardware.
+s3-bucket-loader leverages a simple master/worker paradigm to get economies of scale for copying many files from sourceA to sourceB. Even though this is coded with S3 being the ultimate destination it could be used for other targets as well. The speed at which you can import a given fileset into S3 (through yas3fs in this case) is only limited on how much money you want to spend in worker hardware. For example this has been used to import and validate in S3 over 35k files (11gb total) in roughly 16 minutes; using 40 ec2 t2.medium instances as workers. 
 
 ![Alt text](/diagram.png "Diagram")
 
@@ -23,7 +23,7 @@ This is a multi-threaded Java program that can be launched in two modes `master`
 
 5. The master begins creating the TOC (consisting of filepath and size), and sends a SQS message for each file to the TOC queue.
 
-6. Workers begin consuming TOC messages off the queue and execute rsyncs from the source -> destination
+6. Workers begin consuming TOC messages off the queue and execute rsyncs from the source -> destination. As workers are consuming they periodly send CURRENT SUMMARY updates to the master. If `failfast` is configured and any failures are detected the master can switch the cluster to ERROR_REPORT mode immediately (see below).
 
 7. When workers are complete, they publish their WRITE SUMMARY and go into an IDLE state
 
