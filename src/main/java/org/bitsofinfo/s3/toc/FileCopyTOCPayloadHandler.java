@@ -2,11 +2,7 @@ package org.bitsofinfo.s3.toc;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.StringTokenizer;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.exec.CommandLine;
 import org.apache.log4j.Logger;
@@ -17,19 +13,27 @@ import org.bitsofinfo.s3.worker.WorkerState;
 
 import com.google.gson.Gson;
 
-public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
+public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 
-	private static final Logger logger = Logger.getLogger(RSyncInvokingTOCPayloadHandler.class);
+	private static final Logger logger = Logger.getLogger(FileCopyTOCPayloadHandler.class);
 
 	private CommandExecutor executor = null;
 	private String sourceDirectoryRootPath = null;
 	private String targetDirectoryRootPath = null;
+	
+	private boolean useRsync = true;
+	private String rsyncOptions = null;
+	private List<String> rsyncOptionsList = new ArrayList<String>();
+	
 	private String chown = null;
+	private boolean chownDirsOnly = false;
+	
 	private String chmod = null;
+	private boolean chmodDirsOnly = false;
 	
 	private Gson gson = new Gson();
 	
-	public RSyncInvokingTOCPayloadHandler() {
+	public FileCopyTOCPayloadHandler() {
 		this.executor = new CommandExecutor();
 	}
 	
@@ -68,33 +72,38 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 		 * RSYNC (files only)
 		 */
 		if (!payload.tocInfo.isDirectory()) {
-			/*
-			// rsync --inplace -avz sourcePath targetPath
-			CommandLine rsyncCmdLine = new CommandLine("rsync");
-			rsyncCmdLine.addArgument("--inplace"); 
-			//rsyncCmdLine.addArgument("-avz");
-			rsyncCmdLine.addArgument("-vz");
-			rsyncCmdLine.addArgument(sourceFilePath,false);
-			rsyncCmdLine.addArgument(targetFilePath,false);
 			
-			CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
-			commandsRun.add(rsyncResult);
-			if (rsyncResult.getExitCode() > 0) {
-				return; // exit
-			}*/
+			if (this.isUseRsync()) {
+				// rsync --inplace -avz sourcePath targetPath
+				CommandLine rsyncCmdLine = new CommandLine("rsync");
+				for (String arg : rsyncOptionsList) {
+					rsyncCmdLine.addArgument(arg);
+				}
+				rsyncCmdLine.addArgument(sourceFilePath,false);
+				rsyncCmdLine.addArgument(targetFilePath,false);
+				
+				CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+				commandsRun.add(rsyncResult);
+				if (rsyncResult.getExitCode() > 0) {
+					return; // exit
+				}
 			
-			CommandLine rsyncCmdLine = new CommandLine("cp");
-			rsyncCmdLine.addArgument(sourceFilePath,false);
-			rsyncCmdLine.addArgument(targetFilePath,false);
+				
+			// otherwise just use cp
+			} else {
 			
-			CmdResult rsyncResult = exec(1,"cp",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
-			commandsRun.add(rsyncResult);
-			if (rsyncResult.getExitCode() > 0) {
-				return; // exit
+				CommandLine rsyncCmdLine = new CommandLine("cp");
+				rsyncCmdLine.addArgument(sourceFilePath,false);
+				rsyncCmdLine.addArgument(targetFilePath,false);
+				
+				CmdResult rsyncResult = exec(1,"cp",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+				commandsRun.add(rsyncResult);
+				if (rsyncResult.getExitCode() > 0) {
+					return; // exit
+				}
 			}
 			
 		}
-		
 		
 		/********************
 		 * HANDLE CHOWNS
@@ -109,8 +118,13 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 		/**
 		 * CHOWN 
 		 */
+		boolean canChown = true;
+		if (chownDirsOnly && !payload.tocInfo.isDirectory) {
+			canChown = false;
+		}
+		
 		CmdResult chownResult  = null;
-		if (chown != null) {
+		if (chown != null && canChown) {
 			
 			// chown -R x:y targetFilePath
 			CommandLine chownCmdLine = new CommandLine("chown");
@@ -128,8 +142,13 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 		/**
 		 * CHMOD
 		 */
+		boolean canChmod = true;
+		if (chmodDirsOnly && !payload.tocInfo.isDirectory) {
+			canChmod = false;
+		}
+		
 		CmdResult chmodResult  = null;
-		if (chmod != null) {
+		if (chmod != null && canChmod) {
 			
 			// chmod -R XXX targetFilePath
 			CommandLine chmodCmdLine = new CommandLine("chmod");
@@ -228,6 +247,33 @@ public class RSyncInvokingTOCPayloadHandler implements TOCPayloadHandler {
 
 	public void setChmod(String chmod) {
 		this.chmod = chmod;
+	}
+
+	public boolean isUseRsync() {
+		return useRsync;
+	}
+
+	public void setUseRsync(boolean useRsync) {
+		this.useRsync = useRsync;
+	}
+	
+	public void setChownDirsOnly(boolean dirsOnly) {
+		this.chownDirsOnly = dirsOnly;
+	}
+	
+	public void setChmodDirsOnly(boolean dirsOnly) {
+		this.chmodDirsOnly = dirsOnly;
+	}
+
+	public String getRsyncOptions() {
+		return rsyncOptions;
+	}
+
+	public void setRsyncOptions(String rsyncOptions) {
+		this.rsyncOptions = rsyncOptions;
+		for (String option : rsyncOptions.split(" ")) {
+			this.rsyncOptionsList.add(option);
+		}
 	}
 	
 }

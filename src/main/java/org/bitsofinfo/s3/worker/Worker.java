@@ -14,7 +14,7 @@ import org.bitsofinfo.s3.control.CCPayload;
 import org.bitsofinfo.s3.control.CCPayloadHandler;
 import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
-import org.bitsofinfo.s3.toc.RSyncInvokingTOCPayloadHandler;
+import org.bitsofinfo.s3.toc.FileCopyTOCPayloadHandler;
 import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCPayloadHandler;
@@ -315,31 +315,46 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		
 		TOCPayloadHandler handler = (TOCPayloadHandler)Class.forName(className).newInstance();
 		
-		if (handler instanceof RSyncInvokingTOCPayloadHandler) {
+		
+		/**
+		 * FileCopyTOCPayloadHandler
+		 */
+		if (handler instanceof FileCopyTOCPayloadHandler) {
 			
-			((RSyncInvokingTOCPayloadHandler)handler)
-				.setSourceDirectoryRootPath(props.getProperty("tocPayloadHandler.source.dir.root"));
+			FileCopyTOCPayloadHandler fcHandler = (FileCopyTOCPayloadHandler)handler;
 			
-			((RSyncInvokingTOCPayloadHandler)handler)
-				.setTargetDirectoryRootPath(props.getProperty("tocPayloadHandler.target.dir.root"));
+			fcHandler.setSourceDirectoryRootPath(props.getProperty("tocPayloadHandler.source.dir.root"));
 			
+			fcHandler.setTargetDirectoryRootPath(props.getProperty("tocPayloadHandler.target.dir.root"));
 			
-			String chmod = props.getProperty("tocPayloadHandler.write.rsync.chmod");
-			if (chmod != null) {
-				((RSyncInvokingTOCPayloadHandler)handler)
-				.setChmod(chmod);
+			fcHandler.setUseRsync(Boolean.valueOf(props.getProperty("tocPayloadHandler.write.use.rsync")));
+			
+			if (fcHandler.isUseRsync()) {
+				fcHandler.setRsyncOptions(props.getProperty("tocPayloadHandler.write.rsync.options"));
 			}
 			
-			String chown = props.getProperty("tocPayloadHandler.write.rsync.chown");
+			String chmod = props.getProperty("tocPayloadHandler.write.chmod");
+			if (chmod != null) {
+				boolean dirsOnly = Boolean.valueOf(props.getProperty("tocPayloadHandler.write.chmod.dirsOnly"));
+				fcHandler.setChmod(chmod);
+				fcHandler.setChmodDirsOnly(dirsOnly);
+			}
+			
+			String chown = props.getProperty("tocPayloadHandler.write.chown");
 			if (chown != null) {
-				((RSyncInvokingTOCPayloadHandler)handler)
-				.setChown(chown);
+				boolean dirsOnly = Boolean.valueOf(props.getProperty("tocPayloadHandler.write.chown.dirsOnly"));
+				fcHandler.setChown(chown);
+				fcHandler.setChownDirsOnly(dirsOnly);
 			}
 			
 			return handler;
 		}
 		
 		
+		
+		/**
+		 * ValidatingTOCPayloadHandler
+		 */
 		if (handler instanceof ValidatingTOCPayloadHandler) {
 			
 			((ValidatingTOCPayloadHandler)handler)
