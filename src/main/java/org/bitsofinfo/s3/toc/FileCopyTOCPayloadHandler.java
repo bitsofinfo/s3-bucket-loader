@@ -3,12 +3,14 @@ package org.bitsofinfo.s3.toc;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import org.apache.commons.exec.CommandLine;
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.cmd.CmdResult;
 import org.bitsofinfo.s3.cmd.CommandExecutor;
-import org.bitsofinfo.s3.cmd.FilePathOpResult;
+import org.bitsofinfo.s3.cmd.TocPathOpResult;
 import org.bitsofinfo.s3.worker.WorkerState;
 
 import com.google.gson.Gson;
@@ -24,6 +26,8 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 	private boolean useRsync = true;
 	private String rsyncOptions = null;
 	private List<String> rsyncOptionsList = new ArrayList<String>();
+	private String rsyncTolerableErrorsRegex = null;
+	private Pattern rysyncTolerableErrorPattern = null;
 	
 	private String chown = null;
 	private boolean chownDirsOnly = false;
@@ -62,9 +66,12 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 		mkdirCmdLine.addArgument("-p");
 		mkdirCmdLine.addArgument(targetDirPath,false);
 
-		CmdResult mkdirResult = exec(1,"mkdir",mkdirCmdLine,targetDirPath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+		CmdResult mkdirResult = exec(1,"mkdir",mkdirCmdLine,targetDirPath);
 		commandsRun.add(mkdirResult);
 		if (mkdirResult.getExitCode() > 0) {
+			workerState.addTocPathWriteFailure(
+					new TocPathOpResult(payload.mode, false, targetFilePath, mkdirCmdLine.toString(), gson.toJson(mkdirResult)));
+			
 			return; // exit
 		}
 			
@@ -82,23 +89,43 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 				rsyncCmdLine.addArgument(sourceFilePath,false);
 				rsyncCmdLine.addArgument(targetFilePath,false);
 				
-				CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+				CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath);
 				commandsRun.add(rsyncResult);
+				
 				if (rsyncResult.getExitCode() > 0) {
-					return; // exit
+					
+					// tolerable?
+					if (!this.rsyncErrorIsTolerable(rsyncResult)) {
+						
+						workerState.addTocPathWriteFailure(
+								new TocPathOpResult(payload.mode, false, targetFilePath, rsyncCmdLine.toString(), gson.toJson(rsyncCmdLine)));
+						
+						return; // exit
+						
+					} else {
+						// record that we tolerated this error
+						workerState.addTocPathErrorTolerated(
+								new TocPathOpResult(payload.mode, true, targetFilePath, 
+										"Error tolerated by regex: " + this.rsyncTolerableErrorsRegex,
+										gson.toJson(rsyncCmdLine)));
+					}
 				}
 			
 				
 			// otherwise just use cp
 			} else {
 			
-				CommandLine rsyncCmdLine = new CommandLine("cp");
-				rsyncCmdLine.addArgument(sourceFilePath,false);
-				rsyncCmdLine.addArgument(targetFilePath,false);
+				CommandLine cpCmdLine = new CommandLine("cp");
+				cpCmdLine.addArgument(sourceFilePath,false);
+				cpCmdLine.addArgument(targetFilePath,false);
 				
-				CmdResult rsyncResult = exec(1,"cp",rsyncCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+				CmdResult rsyncResult = exec(1,"cp",cpCmdLine,targetFilePath);
 				commandsRun.add(rsyncResult);
 				if (rsyncResult.getExitCode() > 0) {
+					
+					workerState.addTocPathWriteFailure(
+							new TocPathOpResult(payload.mode, false, targetFilePath, cpCmdLine.toString(), gson.toJson(cpCmdLine)));
+					
 					return; // exit
 				}
 			}
@@ -131,9 +158,11 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 			chownCmdLine.addArgument(this.chown);
 			chownCmdLine.addArgument(targetFilePath,false);
 			
-			chownResult = exec(1,"chown",chownCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			chownResult = exec(1,"chown",chownCmdLine,targetFilePath);
 			commandsRun.add(chownResult);
 			if (chownResult.getExitCode() > 0) {
+				workerState.addTocPathWriteFailure(
+						new TocPathOpResult(payload.mode, false, targetFilePath, chownCmdLine.toString(), gson.toJson(chownCmdLine)));
 				return; // exit
 			}
 		}
@@ -155,9 +184,11 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 			chmodCmdLine.addArgument(this.chmod);
 			chmodCmdLine.addArgument(targetFilePath,false);
 			
-			chmodResult = exec(1,"chmod",chmodCmdLine,targetFilePath,sourceFilePath,targetDirPath,targetFilePath,workerState,payload);
+			chmodResult = exec(1,"chmod",chmodCmdLine,targetFilePath);
 			commandsRun.add(chmodResult);
 			if (chmodResult.getExitCode() > 0) {
+				workerState.addTocPathWriteFailure(
+						new TocPathOpResult(payload.mode, false, targetFilePath, chmodCmdLine.toString(), gson.toJson(chmodCmdLine)));
 				return; // exit
 			}
 			
@@ -170,8 +201,8 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 
 		String asJson = gson.toJson(commandsRun.toArray());
 		
-		workerState.addFilePathWritten(
-				new FilePathOpResult(payload.mode, true, targetFilePath, "mkdir + rsync + ?chown + ?chmod", asJson));
+		workerState.addTocPathWritten(
+				new TocPathOpResult(payload.mode, true, targetFilePath, "mkdir + rsync + ?chown + ?chmod", asJson));
 
 		
 	}
@@ -180,12 +211,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 	private CmdResult exec(int maxAttempts, 
 						   String desc, 
 						   CommandLine cmd, 
-						   String retryExistancePathToCheck, 
-						   String sourceFilePath, 
-						   String targetDirPath, 
-						   String targetFilePath, 
-						   WorkerState workerState, 
-						   TOCPayload payload) {
+						   String retryExistancePathToCheck) {
 		
 		String cmdStr = null;
 		CmdResult result = null;
@@ -208,26 +234,37 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 					Thread.currentThread().sleep(500);
 				} 
 			}
-			
-			String resultAsJson = gson.toJson(result);
-			
-			if (result.getExitCode() > 0) {
-				workerState.addFilePathWriteFailure(
-						new FilePathOpResult(payload.mode, false, targetFilePath, cmdStr, resultAsJson));
-			}
-			
+
 		} catch(Exception e) {
-			workerState.addFilePathWriteFailure(
-					new FilePathOpResult(payload.mode, false, targetFilePath, cmdStr, "exception: " + e.getMessage()));
-			String msg = "File "+desc+" unexpected exception: " +cmdStr + " " + e.getMessage();
+			String msg = "exec() "+desc+" unexpected exception: " +cmdStr + " " + e.getMessage();
 			logger.error(msg,e);
-			 
 			result = new CmdResult(5555, null, msg);
 		}
 		
 		return result;
 	}
 
+	private boolean rsyncErrorIsTolerable(CmdResult result) {
+		
+		if (this.rsyncTolerableErrorsRegex == null) {
+			return false;
+		}
+		
+		String stdError = result.getStdErr();
+		if (stdError != null && this.rysyncTolerableErrorPattern.matcher(stdError).matches()) {
+			logger.debug("rsyncErrorIsTolerable? TRUE: " + stdError);
+			return true;
+		}
+		
+		String stdOut = result.getStdOut();
+		if (stdOut != null && this.rysyncTolerableErrorPattern.matcher(stdOut).matches()) {
+			logger.debug("rsyncErrorIsTolerable? TRUE: " + stdOut);
+			return true;
+		}
+		
+		return false;
+	}
+	
 	public void setSourceDirectoryRootPath(String sourceDirectoryRootPath) {
 		this.sourceDirectoryRootPath = sourceDirectoryRootPath;
 	}
@@ -275,5 +312,16 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 			this.rsyncOptionsList.add(option);
 		}
 	}
+
+	public String getRsyncTolerableErrorsRegex() {
+		return rsyncTolerableErrorsRegex;
+	}
+
+	public void setRsyncTolerableErrorsRegex(String rsyncTolerableErrorsRegex) throws PatternSyntaxException {
+		this.rsyncTolerableErrorsRegex = rsyncTolerableErrorsRegex;
+		this.rysyncTolerableErrorPattern = Pattern.compile(this.rsyncTolerableErrorsRegex);
+		logger.debug("Set rsyncTolerableErrorsRegex="+rsyncTolerableErrorsRegex);
+	}
+	
 	
 }

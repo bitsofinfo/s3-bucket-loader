@@ -3,7 +3,7 @@ package org.bitsofinfo.s3.toc;
 import java.io.File;
 
 import org.apache.log4j.Logger;
-import org.bitsofinfo.s3.cmd.FilePathOpResult;
+import org.bitsofinfo.s3.cmd.TocPathOpResult;
 import org.bitsofinfo.s3.worker.WorkerState;
 
 public class ValidatingTOCPayloadHandler implements TOCPayloadHandler {
@@ -25,25 +25,25 @@ public class ValidatingTOCPayloadHandler implements TOCPayloadHandler {
 			
 			if (payload.tocInfo.isDirectory() && toCheck.exists() && toCheck.isDirectory()) {
 				
-				workerState.addFilePathValidated(
-						new FilePathOpResult(payload.mode, true, targetPath, "io.File.[dir].exists()", "ok"));
+				workerState.addTocPathValidated(
+						new TocPathOpResult(payload.mode, true, targetPath, "io.File.[dir].exists()", "ok"));
 				
 			} else if (!payload.tocInfo.isDirectory() && toCheck.exists() && toCheck.length() == payload.tocInfo.size) {
 				
-				workerState.addFilePathValidated(
-						new FilePathOpResult(payload.mode, true, targetPath, "io.File.exists() + size", "ok"));
+				workerState.addTocPathValidated(
+						new TocPathOpResult(payload.mode, true, targetPath, "io.File.exists() + size", "ok"));
 				
 			} else {
 				logger.error("File validation failed, does not exist! " + targetPath);
 
-				workerState.addFilePathValidateFailure(
-						new FilePathOpResult(payload.mode, false, targetPath, "io.File.exists()", "!exists"));
+				workerState.addTocPathValidateFailure(
+						new TocPathOpResult(payload.mode, false, targetPath, "io.File.exists()", "!exists"));
 			}
 			
 		} catch(Exception e) {
 			
-			workerState.addFilePathValidateFailure(
-					new FilePathOpResult(payload.mode, false, targetPath, "io.File.exists()", "exception: " + e.getMessage()));
+			workerState.addTocPathValidateFailure(
+					new TocPathOpResult(payload.mode, false, targetPath, "io.File.exists()", "exception: " + e.getMessage()));
 			
 			logger.error("File validation exception: " + e.getMessage(),e);
 		}

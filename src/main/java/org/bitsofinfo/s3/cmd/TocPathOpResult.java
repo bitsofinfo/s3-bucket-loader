@@ -2,7 +2,7 @@ package org.bitsofinfo.s3.cmd;
 
 import org.bitsofinfo.s3.toc.TOCPayload;
 
-public class FilePathOpResult {
+public class TocPathOpResult {
 
 	public boolean success;
 	public String filePath;
@@ -11,7 +11,7 @@ public class FilePathOpResult {
 	public TOCPayload.MODE mode;
 	
 	
-	public FilePathOpResult(TOCPayload.MODE mode, boolean success, String filePath, String operation, String message) {
+	public TocPathOpResult(TOCPayload.MODE mode, boolean success, String filePath, String operation, String message) {
 		super();
 		this.success = success;
 		this.filePath = filePath;

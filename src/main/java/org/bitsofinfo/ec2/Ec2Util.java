@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -13,8 +14,10 @@ import java.util.TreeMap;
 import org.apache.log4j.Logger;
 
 import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.BlockDeviceMapping;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusRequest;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
+import com.amazonaws.services.ec2.model.EbsBlockDevice;
 import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceStatus;
 import com.amazonaws.services.ec2.model.Reservation;
@@ -22,6 +25,7 @@ import com.amazonaws.services.ec2.model.RunInstancesRequest;
 import com.amazonaws.services.ec2.model.RunInstancesResult;
 import com.amazonaws.services.ec2.model.ShutdownBehavior;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
+import com.amazonaws.services.ec2.model.VolumeType;
 import com.amazonaws.util.Base64;
 
 public class Ec2Util {
@@ -75,12 +79,23 @@ public class Ec2Util {
 		
 		Integer totalExpectedWorkers = Integer.valueOf(props.getProperty("master.workers.total"));
 		
+		// disk size
+		Collection<BlockDeviceMapping> blockDevices = new ArrayList<BlockDeviceMapping>();
+		blockDevices.add(
+				new BlockDeviceMapping()
+					.withDeviceName("/dev/xvda")
+					.withEbs(new EbsBlockDevice()
+							.withVolumeType(VolumeType.Standard)
+							.withDeleteOnTermination(true)
+						    .withVolumeSize(Integer.valueOf(props.getProperty("master.workers.ec2.disk.size.gigabytes")))));
+		
 		// create our run request for the total workers we expect
 		RunInstancesRequest runInstancesRequest = new RunInstancesRequest();
 		runInstancesRequest.withImageId(props.getProperty("master.workers.ec2.ami.id"))
 					        .withInstanceType(props.getProperty("master.workers.ec2.instanceType"))
 					        .withMinCount(totalExpectedWorkers)
 					        .withMaxCount(totalExpectedWorkers)
+					        .withBlockDeviceMappings(blockDevices)
 					        .withKeyName(props.getProperty("master.workers.ec2.keyName"))
 					        .withSecurityGroupIds(props.getProperty("master.workers.ec2.securityGroupId"))
 					        .withInstanceInitiatedShutdownBehavior(ShutdownBehavior.valueOf(props.getProperty("master.workers.ec2.shutdownBehavior")))

@@ -3,7 +3,7 @@ package org.bitsofinfo.s3.worker;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.bitsofinfo.s3.cmd.FilePathOpResult;
+import org.bitsofinfo.s3.cmd.TocPathOpResult;
 import org.bitsofinfo.s3.control.CCMode;
 
 public class WorkerState {
@@ -11,10 +11,11 @@ public class WorkerState {
 	private String workerHostSourceId = null;
 	private String workerIP = null;
 	private CCMode currentMode = null;
-	private List<FilePathOpResult> filePathsWritten = new ArrayList<FilePathOpResult>();
-	private List<FilePathOpResult> filePathsValidated =new ArrayList<FilePathOpResult>();
-	private List<FilePathOpResult> filePathsWriteFailures = new ArrayList<FilePathOpResult>();
-	private List<FilePathOpResult> filePathValidateFailures = new ArrayList<FilePathOpResult>();
+	private List<TocPathOpResult> tocPathsErrorsTolerated = new ArrayList<TocPathOpResult>();
+	private List<TocPathOpResult> tocPathsWritten = new ArrayList<TocPathOpResult>();
+	private List<TocPathOpResult> tocPathsValidated =new ArrayList<TocPathOpResult>();
+	private List<TocPathOpResult> tocPathsWriteFailures = new ArrayList<TocPathOpResult>();
+	private List<TocPathOpResult> tocPathsValidateFailures = new ArrayList<TocPathOpResult>();
 
 	public WorkerState(String workerHostSourceId, String workerIP) {
 		super();
@@ -26,16 +27,19 @@ public class WorkerState {
 		return workerHostSourceId;
 	}
 	public int getTotalWritesOK() {
-		return filePathsWritten.size();
+		return tocPathsWritten.size();
 	}
 	public int getTotalValidatesOK() {
-		return filePathsValidated.size();
+		return tocPathsValidated.size();
 	}
 	public int getTotalWritesFailed() {
-		return filePathsWriteFailures.size();
+		return tocPathsWriteFailures.size();
 	}
 	public int getTotalValidatesFailed() {
-		return filePathValidateFailures.size();
+		return tocPathsValidateFailures.size();
+	}
+	public int getTotalErrorsTolerated() {
+		return tocPathsErrorsTolerated.size();
 	}
 	
 	public CCMode getCurrentMode() {
@@ -46,23 +50,29 @@ public class WorkerState {
 		this.currentMode = mode;
 	}
 	
-	public synchronized void addFilePathWritten(FilePathOpResult path) {
-		this.filePathsWritten.add(path);
+	public synchronized void addTocPathErrorTolerated(TocPathOpResult path) {
+		this.tocPathsErrorsTolerated.add(path);
 	}
 	
-	public synchronized void addFilePathValidated(FilePathOpResult path) {
-		this.filePathsValidated.add(path);
+	public synchronized void addTocPathWritten(TocPathOpResult path) {
+		this.tocPathsWritten.add(path);
 	}
 	
-	public synchronized void addFilePathValidateFailure(FilePathOpResult path) {
-		this.filePathValidateFailures.add(path);
+	public synchronized void addTocPathValidated(TocPathOpResult path) {
+		this.tocPathsValidated.add(path);
 	}
 	
-	public synchronized void addFilePathWriteFailure(FilePathOpResult path) {
-		this.filePathsWriteFailures.add(path);
+	public synchronized void addTocPathValidateFailure(TocPathOpResult path) {
+		this.tocPathsValidateFailures.add(path);
+	}
+	
+	public synchronized void addTocPathWriteFailure(TocPathOpResult path) {
+		this.tocPathsWriteFailures.add(path);
 	}
 	
 	public int getTotalWritesProcessed() {
+		// note we do not include "tolerated" here because they are part of the OKs
+		// and the "tolerated" stuff is just supplemental information
 		return getTotalWritesFailed() + getTotalWritesOK();
 	}
 	
@@ -70,22 +80,26 @@ public class WorkerState {
 		return getTotalValidatesFailed() + getTotalValidatesOK();
 	}
 
-	public List<FilePathOpResult> getFilePathsWriteFailures() {
-		return filePathsWriteFailures;
+	public List<TocPathOpResult> getTocPathsWriteFailures() {
+		return tocPathsWriteFailures;
 	}
 
-	public void setFilePathsWriteFailures(
-			List<FilePathOpResult> filePathsWriteFailures) {
-		this.filePathsWriteFailures = filePathsWriteFailures;
+	public List<TocPathOpResult> getTocPathsErrorsTolerated() {
+		return tocPathsErrorsTolerated;
 	}
 
-	public List<FilePathOpResult> getFilePathValidateFailures() {
-		return filePathValidateFailures;
+	public void setTocPathsWriteFailures(
+			List<TocPathOpResult> tocPathsWriteFailures) {
+		this.tocPathsWriteFailures = tocPathsWriteFailures;
 	}
 
-	public void setFilePathValidateFailures(
-			List<FilePathOpResult> filePathValidateFailures) {
-		this.filePathValidateFailures = filePathValidateFailures;
+	public List<TocPathOpResult> getTocPathValidateFailures() {
+		return tocPathsValidateFailures;
+	}
+
+	public void setTocPathValidateFailures(
+			List<TocPathOpResult> filePathValidateFailures) {
+		this.tocPathsValidateFailures = filePathValidateFailures;
 	}
 
 	public String getWorkerIP() {

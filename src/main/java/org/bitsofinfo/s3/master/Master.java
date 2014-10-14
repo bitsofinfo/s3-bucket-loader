@@ -3,6 +3,7 @@ package org.bitsofinfo.s3.master;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ import com.amazonaws.services.ec2.model.Tag;
 import com.google.gson.Gson;
 
 
-public class Master implements CCPayloadHandler, Runnable {
+public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete {
 
 	private static final Logger logger = Logger.getLogger(Master.class);
 
@@ -43,7 +44,7 @@ public class Master implements CCPayloadHandler, Runnable {
 	private ControlChannel controlChannel = null;
 	private Properties props = null;
 	
-	private Set<TocInfo> toc = null;
+	private Collection<TocInfo> toc = null;
 	
 	private WorkerRegistry workerRegistry = new WorkerRegistry();
 	private int totalExpectedWorkers = 0;
@@ -71,7 +72,7 @@ public class Master implements CCPayloadHandler, Runnable {
 	private Thread masterMonitor = null;
 	private boolean masterMonitorRunning = true;
 	
-	private TOCFileInfoQueueSender tocFileInfoQueueSender = null;
+	private TOCGeneratorAndSender tocGeneratorAndSender = null;
 	private int tocDispatchThreadsTotal = 4;
 	
 	private Ec2Util ec2util = null;
@@ -111,6 +112,11 @@ public class Master implements CCPayloadHandler, Runnable {
 				destroy();
 			} catch(Exception ignore){}
 		}
+	}
+	
+	// called by TOCGeneratorAndSender when TOC generation is completed
+	public void tocGenerationComplete(Collection<TocInfo> generatedTOC) {
+		this.toc = generatedTOC;
 	}
 	
 	private void spawnEC2() throws Exception {
@@ -175,15 +181,6 @@ public class Master implements CCPayloadHandler, Runnable {
 		
 	}
 
-	public Set<TocInfo> generateTOC(TOCPayload.MODE payloadMode, Queue<TocInfo> tocFileInfoQueue) throws Exception {
-		
-		SourceTOCGenerator tocGenerator = getSourceTOCGenerator(props);
-
-		// generate TOC 
-		logger.info("getTOC("+payloadMode+") generating TOC...");
-		return tocGenerator.generateTOC(tocFileInfoQueue);
-
-	}
 	
 	public void destroy() throws Exception {
 		
@@ -193,7 +190,7 @@ public class Master implements CCPayloadHandler, Runnable {
 		} catch(Exception ignore){}
 		
 		try {
-			tocFileInfoQueueSender.destroy();
+			tocGeneratorAndSender.destroy();
 		} catch(Exception ignore){}
 
 		Thread.currentThread().sleep(10000);
@@ -239,6 +236,10 @@ public class Master implements CCPayloadHandler, Runnable {
 			((DirectoryCrawler)generator).setRootDir(new File(props.getProperty("tocGenerator.source.dir").toString()));
 		}
 	}
+	
+	private String getTocSizeInfo() {
+		return (this.toc != null ? String.valueOf(this.toc.size()) : "[TBD; generation in progress] ");
+	}
 
 
 	public void handlePayload(CCPayload payload) {
@@ -274,31 +275,19 @@ public class Master implements CCPayloadHandler, Runnable {
 				this.currentMode = CCMode.WRITE;
 				this.writesStartAt = new Date();
 				
-				// generate a queue that the "sender" will concurrently consume
-				// from while the TOC is being generated
-				Queue<TocInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
-				this.tocFileInfoQueueSender = new TOCFileInfoQueueSender(MODE.WRITE, this.tocQueue, this.tocDispatchThreadsTotal, tocFileInfoQueue);
-				
 				// switch the system to WRITE mode so workers can immediately start polling
 				logger.info("Switching to WRITE mode....");
 				controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
 				
-				// generate and get all TOC messages (write live to the queue we just created)
-				tocFileInfoQueueSender.start(); // start the consumer
-				this.toc = generateTOC(MODE.WRITE, tocFileInfoQueue); // begin the scan and write
 				
-				// while the queue is not empty, sleep....
-				while (tocFileInfoQueue.size() > 0) {
-					logger.debug("TOC generation complete, waiting for TOCFileInfoQueueSender" +
-							" thread to complete sending to SQS.. size:" + tocFileInfoQueue.size());
-					Thread.currentThread().sleep(10000);
-				}
-				
-				// queue is empty.. stop it
-				tocFileInfoQueueSender.destroy();
-
-				logger.info("Master(currentMode:"+currentMode+") done sending " + toc.size() + " filePaths mode:"+MODE.WRITE+" to TOCQueue....");
-				
+				// fire up a TOCGeneratorAndSender (separate thread) to
+				// generate the TOC and dispatch it out to the TOCQueue
+				this.tocGeneratorAndSender = new TOCGeneratorAndSender(MODE.WRITE, 
+																		this, 
+																		this.tocQueue, 
+																		this.tocDispatchThreadsTotal, 
+																		getSourceTOCGenerator(this.props));
+				this.tocGeneratorAndSender.generateAndSendTOC();
 
 			} catch(Exception e) {
 				logger.error("handlePayload() error handling WRITE mode completion and" +
@@ -323,7 +312,7 @@ public class Master implements CCPayloadHandler, Runnable {
 				if (workerRegistry.anyWorkerWritesContainErrors()) {
 	
 					logger.info("One or more workers report WRITE mode completed.. but with some ERRORS. totalWritten: " + 
-							workerRegistry.getTotalWritten() + " total TOC sent: " + this.toc.size() + 
+							workerRegistry.getTotalWritten() + " total TOC sent: " + getTocSizeInfo()+ 
 							"(expected size). I am now triggering REPORT_ERRORS mode across all workers");
 					
 					this.currentMode = CCMode.REPORT_ERRORS;
@@ -335,35 +324,23 @@ public class Master implements CCPayloadHandler, Runnable {
 				// no errors move onto next phase....(validate)
 				} else {
 					logger.info("All workers report WRITE mode completed.. totalWritten: " + 
-							workerRegistry.getTotalWritten() + " total TOC sent: " + this.toc.size() + 
+							workerRegistry.getTotalWritten() + " total TOC sent: " + getTocSizeInfo() + 
 							"(expected size). I am now triggering VALIDATE mode across all workers");
-					
-					// put our cached TOC into a conccurent queue
-					Queue<TocInfo> tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
-					tocFileInfoQueue.addAll(this.toc);
-					
+
 					// switch the system to VALIDATE mode so workers can immediately start polling
 					logger.info("Switching to VALIDATE mode....");
 					this.validationsStartAt = new Date();
 					this.currentMode = CCMode.VALIDATE;
 					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
 					
-					// create a TOCFileInfoQueueSender to send out messages concurrently via TOC cache...
-					this.tocFileInfoQueueSender = new TOCFileInfoQueueSender(MODE.VALIDATE, this.tocQueue, this.tocDispatchThreadsTotal, tocFileInfoQueue);
-					this.tocFileInfoQueueSender.start();
-					
-					// while the queue is not empty, sleep....
-					while (tocFileInfoQueue.size() > 0) {
-						logger.debug("VALIDATE mode: waiting for TOCFileInfoQueueSender " +
-								"thread to complete sending to SQS.. size:" + tocFileInfoQueue.size());
-						Thread.currentThread().sleep(10000);
-					}
-					
-					// queue is empty.. stop it
-					tocFileInfoQueueSender.destroy();
-					
-					logger.info("Master(currentMode:"+currentMode+") done sending " + toc.size() + " filePaths mode:"+MODE.VALIDATE+" to TOCQueue....");
-					
+					// fire up a TOCGeneratorAndSender (separate thread) to
+					// generate the TOC and dispatch it out to the TOCQueue
+					this.tocGeneratorAndSender = new TOCGeneratorAndSender(MODE.VALIDATE, 
+																			this, 
+																			this.tocQueue, 
+																			this.tocDispatchThreadsTotal, 
+																			this.toc);
+					this.tocGeneratorAndSender.generateAndSendTOC();
 				}
 				
 			} catch(Exception e) {
@@ -384,7 +361,7 @@ public class Master implements CCPayloadHandler, Runnable {
 			
 			try {
 				int totalWrittenSoFar = workerRegistry.getTotalWritten();
-				logger.info("Total written across cluster so far: " + totalWrittenSoFar + " tocSize:" + this.toc.size());
+				logger.info("Total written across cluster so far: " + totalWrittenSoFar + " tocSize:" + getTocSizeInfo());
 			
 				// if any current summaries contain errors....and we are in fail fast mode...
 				if (this.failfastOnWorkerCurrentSummaryError && workerRegistry.anyWorkerCurrentSummaryWritesContainErrors()) {
@@ -424,7 +401,7 @@ public class Master implements CCPayloadHandler, Runnable {
 				if (workerRegistry.anyWorkerValidationsContainErrors()) {
 	
 					logger.info("One or more workers report VALIDATE mode completed.. but with some ERRORS. totalValidated: " + 
-							workerRegistry.getTotalValidated() + " total TOC sent: " + this.toc.size() + 
+							workerRegistry.getTotalValidated() + " total TOC sent: " + getTocSizeInfo() + 
 							"(expected size). I am now triggering REPORT_ERRORS mode across all workers");
 					
 					this.currentMode = CCMode.REPORT_ERRORS;
@@ -436,7 +413,7 @@ public class Master implements CCPayloadHandler, Runnable {
 				// no errors, go to shutdown!
 				} else {
 					logger.info("All workers report VALIDATE mode completed.. totalValidated: " + 
-							workerRegistry.getTotalValidated() + " total TOC sent: " + this.toc.size() + 
+							workerRegistry.getTotalValidated() + " total TOC sent: " + getTocSizeInfo() + 
 							" I am now issueing CMD_WORKER_SHUTDOWN");
 					
 					// dump runtime
@@ -467,7 +444,7 @@ public class Master implements CCPayloadHandler, Runnable {
 			
 			try {
 				int totalValidatedSoFar = workerRegistry.getTotalValidated();
-				logger.info("Total validated across cluster so far: " + totalValidatedSoFar + " tocSize:" + this.toc.size());
+				logger.info("Total validated across cluster so far: " + totalValidatedSoFar + " tocSize:" + getTocSizeInfo());
 			
 				// if any current summaries contain errors....and we are in fail fast mode...
 				if (this.failfastOnWorkerCurrentSummaryError && workerRegistry.anyWorkerCurrentValidationsContainErrors()) {

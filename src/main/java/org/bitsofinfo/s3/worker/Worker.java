@@ -264,8 +264,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					
 					// build report...
 					ErrorReport errorReport = new ErrorReport();
-					errorReport.failedValidates = myWorkerState.getFilePathValidateFailures();
-					errorReport.failedWrites = myWorkerState.getFilePathsWriteFailures();
+					errorReport.failedValidates = myWorkerState.getTocPathValidateFailures();
+					errorReport.failedWrites = myWorkerState.getTocPathsWriteFailures();
+					errorReport.errorsTolerated = myWorkerState.getTocPathsErrorsTolerated();
 				
 					// convert to json
 					String errorReportJson = new GsonBuilder().setPrettyPrinting().create().toJson(errorReport);
@@ -329,6 +330,10 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			fcHandler.setUseRsync(Boolean.valueOf(props.getProperty("tocPayloadHandler.write.use.rsync")));
 			
+			if (props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex") != null) {
+				fcHandler.setRsyncTolerableErrorsRegex((String)props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex"));
+			}
+			
 			if (fcHandler.isUseRsync()) {
 				fcHandler.setRsyncOptions(props.getProperty("tocPayloadHandler.write.rsync.options"));
 			}
@@ -374,6 +379,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		if (mode == MODE.WRITE) {
 			ResultSummary writeSummary = new ResultSummary(myWorkerState.getTotalWritesOK(), 
 														   myWorkerState.getTotalWritesFailed(), 
+														   myWorkerState.getTotalErrorsTolerated(),
 														   myWorkerState.getTotalWritesProcessed());
 	
 			return gson.toJson(writeSummary);
@@ -383,6 +389,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			ResultSummary validateSummary = new ResultSummary(myWorkerState.getTotalValidatesOK(), 
 					   									  	  myWorkerState.getTotalValidatesFailed(), 
+					   									  	  myWorkerState.getTotalErrorsTolerated(),
 					   									  	  myWorkerState.getTotalValidationsProcessed());
 
 			return gson.toJson(validateSummary);
