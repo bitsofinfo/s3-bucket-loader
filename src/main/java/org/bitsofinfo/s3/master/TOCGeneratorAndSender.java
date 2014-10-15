@@ -16,7 +16,7 @@ public class TOCGeneratorAndSender implements Runnable {
 	private static final Logger logger = Logger.getLogger(TOCGeneratorAndSender.class);
 
 	private Thread myThread = new Thread(this);
-	private TOCFileInfoQueueSender tocFileInfoQueueSender = null;
+	private TocInfoQueueSender tocFileInfoQueueSender = null;
 	private Queue<TocInfo> tocFileInfoQueue = null;
 	private SourceTOCGenerator tocGenerator = null;
 	private MODE mode = null;
@@ -35,10 +35,10 @@ public class TOCGeneratorAndSender implements Runnable {
 
 		// populate the queue that the "sender" will concurrently consume
 		// from while the TOC is being generated
-		this.tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
+		this.tocFileInfoQueue = new TocInfoSizeAwareQueue(100000000);
 		this.tocFileInfoQueue.addAll(this.toc);
 		
-		this.tocFileInfoQueueSender = new TOCFileInfoQueueSender(mode, tocQueue, tocDispatchThreadsTotal, this.tocFileInfoQueue);
+		this.tocFileInfoQueueSender = new TocInfoQueueSender(mode, tocQueue, tocDispatchThreadsTotal, this.tocFileInfoQueue);
 
 	}
 
@@ -54,9 +54,9 @@ public class TOCGeneratorAndSender implements Runnable {
 
 		// generate a queue that the "sender" will concurrently consume
 		// from while the TOC is being generated
-		this.tocFileInfoQueue = new ConcurrentLinkedQueue<TocInfo>();
+		this.tocFileInfoQueue = new TocInfoSizeAwareQueue(100000000);
 		
-		this.tocFileInfoQueueSender = new TOCFileInfoQueueSender(mode, tocQueue, tocDispatchThreadsTotal, this.tocFileInfoQueue);
+		this.tocFileInfoQueueSender = new TocInfoQueueSender(mode, tocQueue, tocDispatchThreadsTotal, this.tocFileInfoQueue);
 
 	}
 

@@ -10,10 +10,10 @@ import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
 
-public class TOCFileInfoQueueSender implements Runnable {
+public class TocInfoQueueSender implements Runnable {
 	
 
-	private static final Logger logger = Logger.getLogger(TOCFileInfoQueueSender.class);
+	private static final Logger logger = Logger.getLogger(TocInfoQueueSender.class);
 
 	private TOCQueue tocQueue = null;
 	private Queue<TocInfo> toConsumeFrom = null;
@@ -21,7 +21,7 @@ public class TOCFileInfoQueueSender implements Runnable {
 	private List<Thread> threads = new ArrayList<Thread>();
 	private MODE mode = null;
 
-	public TOCFileInfoQueueSender(MODE mode, TOCQueue tocQueue, int totalThreads, Queue<TocInfo> toConsumeFrom) {
+	public TocInfoQueueSender(MODE mode, TOCQueue tocQueue, int totalThreads, Queue<TocInfo> toConsumeFrom) {
 		this.toConsumeFrom = toConsumeFrom;
 		this.tocQueue= tocQueue;
 		this.mode = mode;

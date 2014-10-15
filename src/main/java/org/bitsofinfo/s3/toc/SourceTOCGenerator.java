@@ -7,9 +7,11 @@ public interface SourceTOCGenerator {
 
 	/**
 	 * Generate the TOC list. Implementor should write live/realtime
-	 * to the passed tocQueue as well as return a static Set when complete.
+	 * to the passed tocQueue's as well as return a static Set when complete.
 	 * 
-	 * @param tocQueue
+	 * @param tocQueue 
+	 * @param largeFileMinSize
+	 * @param largeFileTocQueue
 	 * @return
 	 * @throws Exception
 	 */

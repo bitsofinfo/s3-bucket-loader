@@ -7,18 +7,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
+import org.bitsofinfo.s3.worker.WriteBackoffMonitor;
 import org.bitsofinfo.s3.worker.WriteMonitor;
 
 /**
  * Monitors the Yas3fs log for entries like this looking for the s3_queue being zero
- * meaning that there are no uploads to s3 in progress
+ * meaning that there are no uploads to s3 in progress. It also can act as a WriteBackoffMonitor
+ * to monitor when the total number in s3_queue gets to high.
  * 
  * INFO entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: 1, 0, 0, 0, 0, 0
  *	
  * @author bitsofinfo
  *
  */
-public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
+public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor, Runnable {
 	
 	private static final Logger logger = Logger.getLogger(Yas3fsS3UploadMonitor.class);
 
@@ -30,6 +32,8 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 	private Thread monitorThread = null;
 	private String latestLogTail = null;
 	
+	private Integer backoffWhenTotalS3Uploads = 10;
+	
 	private Stack<Integer> s3UploadCounts = new Stack<Integer>();
 	
 	public Yas3fsS3UploadMonitor() {}
@@ -38,6 +42,13 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 		this.pathToLogFile = pathToLogFile;	
 		this.checkEveryMS = checkEveryMS;
 		this.isIdleWhenNZeroUploads = isIdleWhenNZeroUploads;
+	}
+	
+	
+	public Yas3fsS3UploadMonitor(String pathToLogFile, int backoffWhenTotalS3Uploads, long checkEveryMS) {
+		this.pathToLogFile = pathToLogFile;	
+		this.checkEveryMS = checkEveryMS;
+		this.backoffWhenTotalS3Uploads = backoffWhenTotalS3Uploads;
 	}
 	
 	public void start() {
@@ -56,7 +67,7 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 				Thread.currentThread().sleep(this.checkEveryMS);
 				
 				RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
-				byte[] buffer = new byte[10240];
+				byte[] buffer = new byte[10240]; // read ~10k
 				if (file.length() >= buffer.length) {
 					file.seek(file.length()-buffer.length);
 				}
@@ -73,7 +84,6 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 	
 	public int getS3UploadQueueSize() {
 		if (this.latestLogTail != null) {
-			System.out.println(latestLogTail); 
 			Pattern s3QueueSizePatten = Pattern.compile(".+s3_queue: \\d+, \\d+, \\d+, \\d+, \\d+, (\\d+).*");
 			Matcher m = s3QueueSizePatten.matcher(this.latestLogTail);
 			int lastMatch = -1;
@@ -86,6 +96,18 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 		}
 		
 		return -1;
+	}
+	
+	public boolean writesShouldBackoff() {
+		int currentS3UploadSize = this.getS3UploadQueueSize();
+		
+		if (currentS3UploadSize >= this.backoffWhenTotalS3Uploads) {
+			logger.debug("writesShouldBackoff() currentS3UploadSize=" + currentS3UploadSize + 
+					" and backoffWhenTotalS3Uploads=" + this.backoffWhenTotalS3Uploads);
+			return true;
+		}
+		
+		return false;
 	}
 	
 	public boolean writesAreComplete() {
@@ -135,6 +157,10 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, Runnable {
 
 	public void setPathToLogFile(String pathToLogFile) {
 		this.pathToLogFile = pathToLogFile;
+	}
+
+	public void setBackoffWhenTotalS3Uploads(Integer backoffWhenTotalS3Uploads) {
+		this.backoffWhenTotalS3Uploads = backoffWhenTotalS3Uploads;
 	}
 
 }

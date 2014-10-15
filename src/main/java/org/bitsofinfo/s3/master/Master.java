@@ -78,6 +78,10 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 	private Ec2Util ec2util = null;
 	
 	private boolean failfastOnWorkerCurrentSummaryError = false;
+	
+	private TOCQueueEmptier tocQueueEmptier = null;
+	
+	private int ec2MinutesToWait = 10;
 
 	public Master(Properties props) {
 		
@@ -98,6 +102,10 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 			this.tocDispatchThreadsTotal = Integer.valueOf(props.getProperty("master.tocqueue.dispatch.threads"));
 			
 			this.failfastOnWorkerCurrentSummaryError = Boolean.valueOf(props.getProperty("master.failfast.on.worker.current.summary.error"));
+			
+			if (props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init") != null) {
+				ec2MinutesToWait = Integer.valueOf(props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init"));
+			}
 
 			tocQueue = 		 new TOCQueue(false, awsAccessKey, awsSecretKey, sqsQueueName, null);
 			controlChannel = new ControlChannel(true, awsAccessKey, awsSecretKey, snsControlTopicName, userAccountPrincipalId, userARN, this);
@@ -191,6 +199,10 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 		
 		try {
 			tocGeneratorAndSender.destroy();
+		} catch(Exception ignore){}
+		
+		try {
+			tocQueueEmptier.destroy();
 		} catch(Exception ignore){}
 
 		Thread.currentThread().sleep(10000);
@@ -370,13 +382,14 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 							"failfastOnWorkerCurrentSummaryError=true, so I am now triggering " +
 							"REPORT_ERRORS mode across all workers and stopping WRITE mode.");
 					
-					// purge the TOCQueue
-					this.purgeTOCQueueContents();
-					
 					this.currentMode = CCMode.REPORT_ERRORS;
 					
 					// switch the system to REPORT_ERRORS mode
 					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
+					
+					// purge the TOCQueue
+					this.purgeTOCQueueContents();
+					
 				}
 			} catch(Exception e) {
 				logger.error("handlePayload() error in WRITE reaction to current" +
@@ -452,14 +465,15 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 					logger.info("One or more workers report VALIDATE mode current summary with ERRORS. " +
 							"failfastOnWorkerCurrentSummaryError=true, so I am now triggering " +
 							"REPORT_ERRORS mode across all workers and stopping VALIDATE mode.");
-					
-					// purge the TOCQueue
-					this.purgeTOCQueueContents();
-					
+
 					this.currentMode = CCMode.REPORT_ERRORS;
 					
 					// switch the system to REPORT_ERRORS mode
 					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
+					
+					// purge the TOCQueue
+					this.purgeTOCQueueContents();
+					
 				}
 			} catch(Exception e) {
 				logger.error("handlePayload() error in WRITE reaction to current" +
@@ -545,12 +559,12 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 						}
 					}
 					
-					// if its been more than 10 minutes since we started and we STILL
+					// if its been more than ec2MinutesToWait minutes since we started and we STILL
 					// have ec2 instances that have yet to report their worker, kill THEM!
 					// and decrement expected workers so the next INITIALIZE resend by workers
 					// will get us moving forward.
-					if (System.currentTimeMillis() - this.masterStartAt.getTime() > (60000*10)) {
-						logger.debug("Its been more than 10 minutes since we've started and are short workers... terminating them");
+					if (System.currentTimeMillis() - this.masterStartAt.getTime() > (60000*ec2MinutesToWait)) {
+						logger.debug("Its been more than "+ec2MinutesToWait+" minutes since we've started and are short workers... terminating them");
 						for (String instanceId2term : ec2InstanceIdsNoInitializedWorker) {
 							
 							// issue shutdown to them only first
@@ -574,16 +588,9 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 	
 	private void purgeTOCQueueContents() {
 		try {
-			TOCQueueEmptier emptier = new TOCQueueEmptier(this.tocQueue, this.tocDispatchThreadsTotal);
-			emptier.start();
-			
-			// give it a few seconds to clean it
-			while (emptier.isRunning()) {
-				Thread.currentThread().sleep(1000);
-			}
-			
-			// done!
-			
+			tocQueueEmptier = new TOCQueueEmptier(this.tocQueue, this.tocDispatchThreadsTotal);
+			tocQueueEmptier.start();
+
 		} catch(Exception e) {
 			logger.error("Unexpected error purging TOC contents: "+e.getMessage(),e);
 		}

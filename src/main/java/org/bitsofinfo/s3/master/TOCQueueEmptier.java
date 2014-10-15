@@ -57,6 +57,8 @@ public class TOCQueueEmptier implements Runnable {
 					destroy();
 				}
 				
+				Thread.currentThread().sleep(rand.nextInt(1000));
+				
 			} catch(Exception e) {
 				logger.error("Unexpected error: " + e.getMessage(),e);
 			}

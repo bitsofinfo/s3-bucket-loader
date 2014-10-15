@@ -83,9 +83,9 @@ public class Ec2Util {
 		Collection<BlockDeviceMapping> blockDevices = new ArrayList<BlockDeviceMapping>();
 		blockDevices.add(
 				new BlockDeviceMapping()
-					.withDeviceName("/dev/xvda")
+					.withDeviceName(props.getProperty("master.workers.ec2.disk.deviceName"))
 					.withEbs(new EbsBlockDevice()
-							.withVolumeType(VolumeType.Standard)
+							.withVolumeType(VolumeType.valueOf(props.getProperty("master.workers.ec2.disk.volumeType")))
 							.withDeleteOnTermination(true)
 						    .withVolumeSize(Integer.valueOf(props.getProperty("master.workers.ec2.disk.size.gigabytes")))));
 		

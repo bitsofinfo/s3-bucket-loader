@@ -31,7 +31,7 @@ public class CommandExecutor {
 			try {
 			
 				DefaultExecutor executor = new DefaultExecutor();
-					executor.setStreamHandler(new ExecuteStreamHandler() {
+				executor.setStreamHandler(new ExecuteStreamHandler() {
 						public void setProcessOutputStream(InputStream is) throws IOException {IOUtils.copy(is, stdOut, "UTF-8");}
 						public void setProcessErrorStream(InputStream is) throws IOException {IOUtils.copy(is, stdErr, "UTF-8");}
 						public void stop() throws IOException {}
@@ -39,7 +39,7 @@ public class CommandExecutor {
 						public void setProcessInputStream(OutputStream os) throws IOException {}
 					});
 					
-				System.out.println(cmdLine.toString());
+				logger.trace("Executing: attempt:" + attempts + " " + cmdLine.toString());
 					
 				int exitValue = executor.execute(cmdLine);
 				if (exitValue > 0) {
@@ -51,9 +51,10 @@ public class CommandExecutor {
 				
 				lastCmdResult = new CmdResult(exitValue,stdOut.toString(),stdErr.toString());
 				
-				// if successful return immediately...
+				// if successful exit loop immediately...
 				if (exitValue == 0) {
-					return lastCmdResult;
+					logger.trace("SUCCESS! exitCode = 0: " + cmdLine.toString());
+					break;
 				}
 				
 			} catch(Exception e) {

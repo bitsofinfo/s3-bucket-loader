@@ -48,6 +48,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	private WorkerState myWorkerState = null;
 	private Gson gson = new Gson();
 	private WriteMonitor writeMonitor = null;
+	private WriteBackoffMonitor writeBackoffMonitor = null;
 	
 	private Properties properties = null;
 	
@@ -55,6 +56,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	
 	private long sendCurrentSummariesEveryMS = 60000;
 	private long currentSummaryLastSentAtMS = -1;
+	
+	private boolean tocQueueConsumersArePaused = false;
 	
 	public Worker(Properties props) {
 
@@ -79,6 +82,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			// write monitor (optional)
 			initWriteMonitor(props);
+			
+			// backoff monitor (optional)
+			initWriteBackoffMonitor(props);
 	
 			// spawn control channel
 			controlChannel = new ControlChannel(false, awsAccessKey, awsSecretKey, snsControlTopicName, userAccountPrincipalId, userARN, this);
@@ -132,7 +138,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	private void initWriteMonitor(Properties props) throws Exception {
 		String writeMonitorClass = props.getProperty("worker.write.complete.monitor.class");
 		if (writeMonitorClass != null) {
-			logger.debug("Attempting to create Monitor: " + writeMonitorClass);
+			logger.debug("Attempting to create WriteMonitor: " + writeMonitorClass);
 			this.writeMonitor = (WriteMonitor)Class.forName(writeMonitorClass).newInstance();
 			
 			if (writeMonitor instanceof Yas3fsS3UploadMonitor) {
@@ -144,19 +150,37 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		}
 	}
 	
+	private void initWriteBackoffMonitor(Properties props) throws Exception {
+		String writeBackoffMonitorClass = props.getProperty("worker.write.backoff.monitor.class");
+		if (writeBackoffMonitorClass != null) {
+			logger.debug("Attempting to create WriteBackoffMonitor: " + writeBackoffMonitorClass);
+			this.writeBackoffMonitor = (WriteBackoffMonitor)Class.forName(writeBackoffMonitorClass).newInstance();
+			
+			if (writeBackoffMonitor instanceof Yas3fsS3UploadMonitor) {
+				Yas3fsS3UploadMonitor m = (Yas3fsS3UploadMonitor)writeBackoffMonitor;
+				m.setBackoffWhenTotalS3Uploads(Integer.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.backoffWhenTotalS3Uploads"))); 
+				m.setCheckEveryMS(Long.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.checkEveryMS")));
+				m.setPathToLogFile(props.getProperty("worker.write.backoff.monitor.yas3fs.logFilePath"));
+			}
+		}
+	}
+	
 	public void startConsuming() {
+		tocQueueConsumersArePaused = false;
 		for (TOCQueue consumer : tocQueueConsumers) {
 			consumer.start();
 		}
 	}
 	
 	public void pauseConsuming() {
+		tocQueueConsumersArePaused = true;
 		for (TOCQueue consumer : tocQueueConsumers) {
 			consumer.pauseConsuming();
 		}
 	}
 	
 	public void resumeConsuming() {
+		tocQueueConsumersArePaused = false;
 		for (TOCQueue consumer : tocQueueConsumers) {
 			consumer.resumeConsuming();
 		}
@@ -237,9 +261,13 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						// start the queue threads
 						this.startConsuming();
 						
-						// if we have an additional monitor configured start that too
+						// if we have an additional monitors configured start those too
 						if (this.writeMonitor != null) {
 							this.writeMonitor.start();
+						}
+						
+						if (this.writeBackoffMonitor != null) {
+							this.writeBackoffMonitor.start();
 						}
 					
 					// we have existing threads, resume consumption
@@ -249,10 +277,13 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 				}
 				
 				
-				// if now in validate mode, destroy the write monitor...
+				// if now in validate mode, destroy the write monitors...
 				if (myWorkerState.getCurrentMode() == CCMode.VALIDATE) {
 					if (this.writeMonitor != null) {
 						this.writeMonitor.destroy();
+					}
+					if (this.writeBackoffMonitor != null) {
+						this.writeBackoffMonitor.destroy();
 					}
 				}
 				
@@ -330,6 +361,10 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			fcHandler.setUseRsync(Boolean.valueOf(props.getProperty("tocPayloadHandler.write.use.rsync")));
 			
+			fcHandler.setRetries(Integer.valueOf(props.getProperty("tocPayloadHandler.write.retries")));
+			
+			fcHandler.setRetriesSleepMS(Long.valueOf(props.getProperty("tocPayloadHandler.write.retries.sleep.ms")));
+			
 			if (props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex") != null) {
 				fcHandler.setRsyncTolerableErrorsRegex((String)props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex"));
 			}
@@ -377,7 +412,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	private String getResultsSummaryAsJSON(MODE mode) {
 		
 		if (mode == MODE.WRITE) {
-			ResultSummary writeSummary = new ResultSummary(myWorkerState.getTotalWritesOK(), 
+			ResultSummary writeSummary = new ResultSummary(this.tocQueueConsumersArePaused,
+														   myWorkerState.getTotalWritesOK(), 
 														   myWorkerState.getTotalWritesFailed(), 
 														   myWorkerState.getTotalErrorsTolerated(),
 														   myWorkerState.getTotalWritesProcessed());
@@ -387,7 +423,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 		} else if (mode == MODE.VALIDATE) {
 			
-			ResultSummary validateSummary = new ResultSummary(myWorkerState.getTotalValidatesOK(), 
+			ResultSummary validateSummary = new ResultSummary(this.tocQueueConsumersArePaused,
+															  myWorkerState.getTotalValidatesOK(), 
 					   									  	  myWorkerState.getTotalValidatesFailed(), 
 					   									  	  myWorkerState.getTotalErrorsTolerated(),
 					   									  	  myWorkerState.getTotalValidationsProcessed());
@@ -407,7 +444,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		while (running) {
 			try {
 
-				Thread.currentThread().sleep(10000);
+				Thread.currentThread().sleep(20000);
 				
 				// if just in Initialized/Idle state do nothing.
 				if (this.myWorkerState.getCurrentMode() == CCMode.INITIALIZED ||
@@ -467,6 +504,22 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 							String asJson = getResultsSummaryAsJSON(MODE.WRITE);
 							this.controlChannel.send(false, CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY, asJson);
 						}
+						
+						// should the TOCQueue thread consumers backoff?
+						if (this.writeBackoffMonitor != null) {
+							
+							if (this.writeBackoffMonitor.writesShouldBackoff()) {
+								if (!this.tocQueueConsumersArePaused) {
+									logger.debug("WriteBackoffMonitor states we should BACKOFF... pausing TOCQueue consumers");
+									this.pauseConsuming();
+								}
+							} else {
+								if (this.tocQueueConsumersArePaused) {
+									logger.debug("WriteBackoffMonitor states we can RESUME... resuming TOCQueue consumers");
+									this.resumeConsuming();
+								}
+							}
+						} 
 					}
 				}
 				
@@ -525,7 +578,10 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			}
 			
 			long lastMsgReceivedAtMS = (System.currentTimeMillis() - tocQueue.getLastMsgReceivedTimeMS());
-			if (lastMsgReceivedAtMS >= this.declareWorkerIdleAtMinLastMsgReceivedMS) {
+			if (!tocQueue.isPaused() &&
+				!tocQueue.isCurrentlyProcessingMessage() && 
+				lastMsgReceivedAtMS >= this.declareWorkerIdleAtMinLastMsgReceivedMS) {
+				
 				threadsThatQualify++;
 			}
 		}

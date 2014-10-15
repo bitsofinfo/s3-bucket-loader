@@ -1,7 +1,10 @@
 package org.bitsofinfo.s3.toc;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 import org.apache.log4j.Logger;
@@ -10,6 +13,9 @@ import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.sqs.AmazonSQSClient;
 import com.amazonaws.services.sqs.model.CreateQueueResult;
+import com.amazonaws.services.sqs.model.DeleteMessageBatchRequest;
+import com.amazonaws.services.sqs.model.DeleteMessageBatchRequestEntry;
+import com.amazonaws.services.sqs.model.DeleteMessageBatchResultEntry;
 import com.amazonaws.services.sqs.model.ListQueuesResult;
 import com.amazonaws.services.sqs.model.Message;
 import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
@@ -37,6 +43,7 @@ public class TOCQueue implements Runnable {
 	
 	private long lastSQSMessageReceivedMS = -1;
 	private int totalMessagesProcessed = 0;
+	private boolean currentlyProcessingMessage = false;
 	
 	public TOCQueue(boolean isConsumer, String awsAccessKey, String awsSecretKey, String sqsQueueName, TOCPayloadHandler tocPayloadHandler) throws Exception {
 		super();
@@ -71,6 +78,7 @@ public class TOCQueue implements Runnable {
 	
 	public void start() {
 		this.consumerThread.start();
+		this.paused = false;
 	}
 	
 	public void pauseConsuming() {
@@ -80,6 +88,10 @@ public class TOCQueue implements Runnable {
 	public void resumeConsuming() {
 		this.lastSQSMessageReceivedMS = System.currentTimeMillis(); // set to now.
 		this.paused = false;
+	}
+	
+	public boolean isPaused() {
+		return this.paused;
 	}
 	
 	/**
@@ -145,12 +157,22 @@ public class TOCQueue implements Runnable {
 			
 			ReceiveMessageResult msgResult = sqsClient.receiveMessage(req);
 			List<Message> messages = msgResult.getMessages();
-
+			
+			DeleteMessageBatchRequest deleteRequest = new DeleteMessageBatchRequest();
+			deleteRequest.setQueueUrl(tocQueueUrl);
+			Collection<DeleteMessageBatchRequestEntry> entries = new ArrayList<DeleteMessageBatchRequestEntry>();
+			deleteRequest.setEntries(entries);
 			for (Message msg : messages) {
-				totalRemoved++;
-				// delete the message, got here no exception
-				sqsClient.deleteMessage(tocQueueUrl, msg.getReceiptHandle());
+				entries.add(new DeleteMessageBatchRequestEntry().withId(msg.getMessageId()));
 			}
+
+			if (entries.size() > 0) {
+				// delete batch
+				sqsClient.deleteMessageBatch(deleteRequest);
+			}
+			
+			// if ok inc, total removed
+			totalRemoved += entries.size();
 			
 			logger.trace("emptyTOCQueue() purging completed!");
 			return totalRemoved;
@@ -164,20 +186,23 @@ public class TOCQueue implements Runnable {
 	
 	public void run() {
 		
+		Random rand = new Random();
+		
 		while(this.running) {
 			
 			if (!this.paused) {
 				try {
 					ReceiveMessageRequest req = new ReceiveMessageRequest();
 					req.setQueueUrl(this.tocQueueUrl);
-					req.setVisibilityTimeout(300); // 5 minutes it will be invisible to other consumers
-					req.setMaxNumberOfMessages(1);
+					req.setVisibilityTimeout(600); // 10 minutes it will be invisible to other consumers
+					req.setMaxNumberOfMessages(10);
 					
 					ReceiveMessageResult msgResult = sqsClient.receiveMessage(req);
 					List<Message> messages = msgResult.getMessages();
 	
 					for (Message msg : messages) {
 						
+						this.currentlyProcessingMessage = true;
 						this.lastSQSMessageReceivedMS = System.currentTimeMillis();
 						this.totalMessagesProcessed++;
 						
@@ -205,16 +230,22 @@ public class TOCQueue implements Runnable {
 						
 						// delete the message, got here no exception
 						sqsClient.deleteMessage(tocQueueUrl, msg.getReceiptHandle());
+						
+						// set to false, we are done processing message
+						this.currentlyProcessingMessage = false;
 					
 					}
 	
 				} catch(Exception e) {
 					logger.error("TOCQueue["+myId+"] run() unexpected error in handling TOCPayload: " + e.getMessage(),e);
+					
+					// set to false, we are done processing message
+					this.currentlyProcessingMessage = false;
 				}
 			}
 			
 			try {
-				Thread.currentThread().sleep(500);
+				Thread.currentThread().sleep(rand.nextInt(1000));
 			} catch(Exception ignore) {}
 			
 		}
@@ -278,6 +309,10 @@ public class TOCQueue implements Runnable {
 
 	public int getTotalMessagesProcessed() {
 		return totalMessagesProcessed;
+	}
+
+	public boolean isCurrentlyProcessingMessage() {
+		return currentlyProcessingMessage;
 	}
 
 }

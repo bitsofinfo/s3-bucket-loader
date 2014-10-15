@@ -35,6 +35,9 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 	private String chmod = null;
 	private boolean chmodDirsOnly = false;
 	
+	private int retries = 1;
+	private long retriesSleepMS = 1000;
+	
 	private Gson gson = new Gson();
 	
 	public FileCopyTOCPayloadHandler() {
@@ -66,7 +69,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 		mkdirCmdLine.addArgument("-p");
 		mkdirCmdLine.addArgument(targetDirPath,false);
 
-		CmdResult mkdirResult = exec(1,"mkdir",mkdirCmdLine,targetDirPath);
+		CmdResult mkdirResult = exec(getRetries(),"mkdir",mkdirCmdLine,targetDirPath);
 		commandsRun.add(mkdirResult);
 		if (mkdirResult.getExitCode() > 0) {
 			workerState.addTocPathWriteFailure(
@@ -89,7 +92,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 				rsyncCmdLine.addArgument(sourceFilePath,false);
 				rsyncCmdLine.addArgument(targetFilePath,false);
 				
-				CmdResult rsyncResult = exec(1,"rsync",rsyncCmdLine,targetFilePath);
+				CmdResult rsyncResult = exec(getRetries(),"rsync",rsyncCmdLine,targetFilePath);
 				commandsRun.add(rsyncResult);
 				
 				if (rsyncResult.getExitCode() > 0) {
@@ -98,7 +101,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 					if (!this.rsyncErrorIsTolerable(rsyncResult)) {
 						
 						workerState.addTocPathWriteFailure(
-								new TocPathOpResult(payload.mode, false, targetFilePath, rsyncCmdLine.toString(), gson.toJson(rsyncCmdLine)));
+								new TocPathOpResult(payload.mode, false, targetFilePath, rsyncCmdLine.toString(), gson.toJson(rsyncResult)));
 						
 						return; // exit
 						
@@ -107,7 +110,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 						workerState.addTocPathErrorTolerated(
 								new TocPathOpResult(payload.mode, true, targetFilePath, 
 										"Error tolerated by regex: " + this.rsyncTolerableErrorsRegex,
-										gson.toJson(rsyncCmdLine)));
+										gson.toJson(rsyncResult)));
 					}
 				}
 			
@@ -119,12 +122,12 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 				cpCmdLine.addArgument(sourceFilePath,false);
 				cpCmdLine.addArgument(targetFilePath,false);
 				
-				CmdResult rsyncResult = exec(1,"cp",cpCmdLine,targetFilePath);
-				commandsRun.add(rsyncResult);
-				if (rsyncResult.getExitCode() > 0) {
+				CmdResult cpResult = exec(getRetries(),"cp",cpCmdLine,targetFilePath);
+				commandsRun.add(cpResult);
+				if (cpResult.getExitCode() > 0) {
 					
 					workerState.addTocPathWriteFailure(
-							new TocPathOpResult(payload.mode, false, targetFilePath, cpCmdLine.toString(), gson.toJson(cpCmdLine)));
+							new TocPathOpResult(payload.mode, false, targetFilePath, cpCmdLine.toString(), gson.toJson(cpResult)));
 					
 					return; // exit
 				}
@@ -162,7 +165,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 			commandsRun.add(chownResult);
 			if (chownResult.getExitCode() > 0) {
 				workerState.addTocPathWriteFailure(
-						new TocPathOpResult(payload.mode, false, targetFilePath, chownCmdLine.toString(), gson.toJson(chownCmdLine)));
+						new TocPathOpResult(payload.mode, false, targetFilePath, chownCmdLine.toString(), gson.toJson(chownResult)));
 				return; // exit
 			}
 		}
@@ -188,7 +191,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 			commandsRun.add(chmodResult);
 			if (chmodResult.getExitCode() > 0) {
 				workerState.addTocPathWriteFailure(
-						new TocPathOpResult(payload.mode, false, targetFilePath, chmodCmdLine.toString(), gson.toJson(chmodCmdLine)));
+						new TocPathOpResult(payload.mode, false, targetFilePath, chmodCmdLine.toString(), gson.toJson(chmodResult)));
 				return; // exit
 			}
 			
@@ -227,11 +230,11 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 				attempts++;
 				logger.debug("exec() attempt#: "+attempts+ " executing "+desc+": " + cmdStr);
 				
-				result = executor.execute(cmd,3);
+				result = executor.execute(cmd,maxAttempts);
 				
 				// if fail, let it breathe
 				if (result.getExitCode() > 0) {
-					Thread.currentThread().sleep(500);
+					Thread.currentThread().sleep(getRetriesSleepMS());
 				} 
 			}
 
@@ -321,6 +324,22 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 		this.rsyncTolerableErrorsRegex = rsyncTolerableErrorsRegex;
 		this.rysyncTolerableErrorPattern = Pattern.compile(this.rsyncTolerableErrorsRegex);
 		logger.debug("Set rsyncTolerableErrorsRegex="+rsyncTolerableErrorsRegex);
+	}
+
+	public int getRetries() {
+		return retries;
+	}
+
+	public void setRetries(int retries) {
+		this.retries = retries;
+	}
+
+	public long getRetriesSleepMS() {
+		return retriesSleepMS;
+	}
+
+	public void setRetriesSleepMS(long retriesSleepMS) {
+		this.retriesSleepMS = retriesSleepMS;
 	}
 	
 	
