@@ -20,11 +20,11 @@ public class TOCGeneratorAndSender implements Runnable {
 	private Queue<TocInfo> tocFileInfoQueue = null;
 	private SourceTOCGenerator tocGenerator = null;
 	private MODE mode = null;
-	private TOCGenerationComplete handler = null;
+	private TOCGenerationEventHandler handler = null;
 	private Collection<TocInfo> toc = null;
 
 	public TOCGeneratorAndSender(MODE mode, 
-			TOCGenerationComplete handler, 
+			TOCGenerationEventHandler handler, 
 			TOCQueue tocQueue, 
 			int tocDispatchThreadsTotal, 
 			Collection<TocInfo> toc) {
@@ -43,7 +43,7 @@ public class TOCGeneratorAndSender implements Runnable {
 	}
 
 	public TOCGeneratorAndSender(MODE mode, 
-			TOCGenerationComplete handler, 
+			TOCGenerationEventHandler handler, 
 			TOCQueue tocQueue, 
 			int tocDispatchThreadsTotal, 
 			SourceTOCGenerator tocGenerator) {
@@ -115,6 +115,7 @@ public class TOCGeneratorAndSender implements Runnable {
 
 		} catch(Exception e) {
 			logger.error("Error generating TOC: " + e.getMessage(),e);
+			handler.tocGenerationError("Error generating TOC: " + e.getMessage(), e);
 		}
 	}
 }

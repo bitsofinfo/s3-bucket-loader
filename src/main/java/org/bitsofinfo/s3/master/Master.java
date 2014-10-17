@@ -8,12 +8,12 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Queue;
-import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
+import org.apache.commons.exec.CommandLine;
 import org.apache.log4j.Logger;
 import org.bitsofinfo.ec2.Ec2Util;
+import org.bitsofinfo.s3.cmd.CmdResult;
+import org.bitsofinfo.s3.cmd.CommandExecutor;
 import org.bitsofinfo.s3.control.CCMode;
 import org.bitsofinfo.s3.control.CCPayload;
 import org.bitsofinfo.s3.control.CCPayloadHandler;
@@ -22,7 +22,6 @@ import org.bitsofinfo.s3.control.ControlChannel;
 import org.bitsofinfo.s3.toc.DirectoryCrawler;
 import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.SourceTOCGenerator;
-import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
 import org.bitsofinfo.s3.util.CompressUtil;
@@ -31,11 +30,13 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.Instance;
+import com.amazonaws.services.ec2.model.InstanceState;
+import com.amazonaws.services.ec2.model.InstanceStatus;
 import com.amazonaws.services.ec2.model.Tag;
 import com.google.gson.Gson;
 
 
-public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete {
+public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHandler {
 
 	private static final Logger logger = Logger.getLogger(Master.class);
 
@@ -51,7 +52,6 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 	
 	private CCMode currentMode = null;
 	
-
 	private Date masterStartAt = null;
 	private Date validationsStartAt = null;
 	private Date validationsEndAt = null;
@@ -82,6 +82,11 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 	private TOCQueueEmptier tocQueueEmptier = null;
 	
 	private int ec2MinutesToWait = 10;
+	
+	private String sourceEc2StartStopInstanceId = null;
+	private boolean sourceEc2HostStopOnMasterShutdown = true;
+	private String sourceEc2PostStartCmd = null;
+	private String sourceEc2PreStopCmd = null;
 
 	public Master(Properties props) {
 		
@@ -103,8 +108,19 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 			
 			this.failfastOnWorkerCurrentSummaryError = Boolean.valueOf(props.getProperty("master.failfast.on.worker.current.summary.error"));
 			
+			
+			// connect to ec2
+			this.ec2Client = new AmazonEC2Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
+			
 			if (props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init") != null) {
 				ec2MinutesToWait = Integer.valueOf(props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init"));
+			}
+			
+			if (props.getProperty("master.source.host.ec2.instanceId") != null) {
+				this.sourceEc2StartStopInstanceId = props.getProperty("master.source.host.ec2.instanceId");
+				this.sourceEc2HostStopOnMasterShutdown = Boolean.valueOf(props.getProperty("master.source.host.ec2.stopOnMasterShutdown"));
+				this.sourceEc2PostStartCmd = props.getProperty("master.source.host.post.start.cmd");
+				this.sourceEc2PreStopCmd = props.getProperty("master.source.host.pre.stop.cmd");
 			}
 
 			tocQueue = 		 new TOCQueue(false, awsAccessKey, awsSecretKey, sqsQueueName, null);
@@ -127,15 +143,21 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 		this.toc = generatedTOC;
 	}
 	
+	public void tocGenerationError(String msg, Exception e) {
+		logger.error("TOCGeneration threw an error, destroying myself....: " + msg, e);
+		try {
+			this.destroy();
+		} catch(Exception e2) {
+			// ignore;
+		}
+	}
+	
 	private void spawnEC2() throws Exception {
 		
 		if (!workersEc2Managed) {
 			return;
 		}
-		
-		// connect to ec2
-		this.ec2Client = new AmazonEC2Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
-		
+
 		this.ec2Instances = ec2util.launchEc2Instances(ec2Client, props);
 		
 		// collect some info
@@ -170,9 +192,55 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 	
 	
 	public void start() throws Exception {
+
 		
 		// seed start
 		this.masterStartAt = new Date();
+		
+		/**
+		 * START the source for our TOC... if specified
+		 */
+		if (this.sourceEc2StartStopInstanceId != null) {
+			
+			// already running?
+			InstanceStatus alreadyRunning = ec2util.getInstanceStatus(this.ec2Client, this.sourceEc2StartStopInstanceId);
+			if (alreadyRunning == null || !alreadyRunning.getInstanceState().getName().equalsIgnoreCase("running")) {
+				this.ec2util.startInstance(this.ec2Client, this.sourceEc2StartStopInstanceId);
+			}
+			
+			// check status
+			boolean sourceEc2InstanceStarted = false;
+			while(!sourceEc2InstanceStarted) {
+				InstanceStatus status = ec2util.getInstanceStatus(this.ec2Client, this.sourceEc2StartStopInstanceId);
+				if (status == null || !status.getInstanceState().getName().equalsIgnoreCase("running")) {
+					sourceEc2InstanceStarted = false;
+					logger.debug("Still waiting for source host instance ["+this.sourceEc2StartStopInstanceId+"] to be running....");
+					Thread.currentThread().sleep(2000);
+				} else {
+					logger.debug("Up and RUNNING! source host instance ["+this.sourceEc2StartStopInstanceId+"]");
+					sourceEc2InstanceStarted = true;
+					break;
+				}
+			}
+
+			
+			if (this.sourceEc2PostStartCmd != null) {
+				
+				Thread.currentThread().sleep(30000);
+				
+				// run the 'master.source.host.post.start.cmd' command
+				CmdResult postStartResult = new CommandExecutor().execute(CommandLine.parse(this.sourceEc2PostStartCmd), 3);
+				if (postStartResult.getExitCode() > 0) {
+					throw new Exception("Source host post start cmd failed: " + this.sourceEc2PostStartCmd);
+				}
+			}
+			
+		}
+
+		
+		if (!new File(props.getProperty("tocGenerator.source.dir")).exists()) {
+			throw new Exception("'tocGenerator.source.dir' does not exist! " + props.getProperty("tocGenerator.source.dir"));
+		}
 		
 		// initialize workers 
 		this.currentMode = CCMode.INITIALIZED;
@@ -233,6 +301,26 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 			}
 		}
 
+		
+		try {
+			if (this.sourceEc2PreStopCmd != null) {
+				// run the 'master.source.host.pre.stop.cmd' command
+				CmdResult postStartResult = new CommandExecutor().execute(CommandLine.parse(this.sourceEc2PreStopCmd), 3);
+				if (postStartResult.getExitCode() > 0) {
+					logger.error("ERROR running: " +sourceEc2PreStopCmd); 
+				}
+			}
+		} catch(Exception e) {
+			logger.error("ERROR running: " +sourceEc2PreStopCmd + " " + e.getMessage(),e);
+		}
+		
+		
+		
+		if (this.sourceEc2HostStopOnMasterShutdown) {
+			try {
+				ec2util.stopInstance(ec2Client, sourceEc2StartStopInstanceId);
+			} catch(Exception ignore){}
+		}
 
 	}
 
@@ -243,7 +331,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 		return tocGenerator;
 	}
 	
-	private void configureTocGenerator(SourceTOCGenerator generator, Properties props) {
+	private void configureTocGenerator(SourceTOCGenerator generator, Properties props) throws Exception {
 		if (generator instanceof DirectoryCrawler) {
 			((DirectoryCrawler)generator).setRootDir(new File(props.getProperty("tocGenerator.source.dir").toString()));
 		}
@@ -345,7 +433,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationComplete
 					this.currentMode = CCMode.VALIDATE;
 					controlChannel.send(true, CCPayloadType.MASTER_CURRENT_MODE, this.currentMode);
 					
-					// fire up a TOCGeneratorAndSender (separate thread) to
+					// fire up a TOCGenera)torAndSender (separate thread) to
 					// generate the TOC and dispatch it out to the TOCQueue
 					this.tocGeneratorAndSender = new TOCGeneratorAndSender(MODE.VALIDATE, 
 																			this, 

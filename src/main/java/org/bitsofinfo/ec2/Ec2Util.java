@@ -24,6 +24,8 @@ import com.amazonaws.services.ec2.model.Reservation;
 import com.amazonaws.services.ec2.model.RunInstancesRequest;
 import com.amazonaws.services.ec2.model.RunInstancesResult;
 import com.amazonaws.services.ec2.model.ShutdownBehavior;
+import com.amazonaws.services.ec2.model.StartInstancesRequest;
+import com.amazonaws.services.ec2.model.StopInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.VolumeType;
 import com.amazonaws.util.Base64;
@@ -58,6 +60,24 @@ public class Ec2Util {
 			names.put(i.getInstanceId(),i.getPrivateIpAddress());
 		}
 		return names;
+	}
+	
+	public void startInstance(AmazonEC2Client ec2Client, String instanceId) throws Exception {
+		StartInstancesRequest startReq = new StartInstancesRequest();
+		List<String> instanceIds = new ArrayList<String>();
+		instanceIds.add(instanceId);
+		startReq.setInstanceIds(instanceIds);
+		logger.debug("Starting EC2 instance...." + Arrays.toString(instanceIds.toArray(new String[]{})));
+		ec2Client.startInstances(startReq);
+	}
+	
+	public void stopInstance(AmazonEC2Client ec2Client, String instanceId) throws Exception {
+		StopInstancesRequest stopReq = new StopInstancesRequest();
+		List<String> instanceIds = new ArrayList<String>();
+		instanceIds.add(instanceId);
+		stopReq.setInstanceIds(instanceIds);
+		logger.debug("Stopping EC2 instance...." + Arrays.toString(instanceIds.toArray(new String[]{})));
+		ec2Client.stopInstances(stopReq);
 	}
 	
 	public void terminateEc2Instance(AmazonEC2Client ec2Client, String instanceId) throws Exception {
@@ -119,6 +139,19 @@ public class Ec2Util {
 		RunInstancesResult result = ec2Client.runInstances(runInstancesRequest);
 		Reservation reservation = result.getReservation();
 		return reservation.getInstances();
+	}
+	
+	public InstanceStatus getInstanceStatus(AmazonEC2Client ec2Client, String instanceId) {
+		List<String> instanceIds = new ArrayList<String>();
+		instanceIds.add(instanceId);
+		DescribeInstanceStatusRequest statusReq = new DescribeInstanceStatusRequest();
+		statusReq.setInstanceIds(instanceIds);
+		DescribeInstanceStatusResult result = ec2Client.describeInstanceStatus(statusReq);
+		List<InstanceStatus> statuses = result.getInstanceStatuses();
+		if (statuses == null || statuses.size() == 0) {
+			return null;
+		}
+		return statuses.iterator().next();
 	}
 	
 	public void dumpEc2InstanceStatus(AmazonEC2Client ec2Client, List<Instance> ec2Instances) {

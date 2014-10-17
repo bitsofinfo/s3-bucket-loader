@@ -1,4 +1,4 @@
-package org.bitsofinfo.s3.toc;
+	package org.bitsofinfo.s3.toc;
 
 import java.io.File;
 import java.util.HashSet;
@@ -60,21 +60,31 @@ public class DirectoryCrawler implements SourceTOCGenerator, Runnable {
 	
 	private void scanNode(File node, Set<TocInfo> toc, Queue<TocInfo> tocQueue) throws Exception {
 	
-		if (node.exists() && !node.getName().startsWith(".")) {
-			
-			String adjustedPath = node.getAbsolutePath().replace(this.rootDir.getAbsolutePath(), "");
-			TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
-			finfo.setIsDirectory(node.isDirectory());
-			toc.add(finfo);
-			tocQueue.add(finfo);
-			tocInfosGenerated++; // increment for logging
-		}
+		try {
 		
-		if (node.isDirectory()) {
-			for (File n : node.listFiles()) {
-				scanNode(n,toc,tocQueue);
+			if (node.exists() && !node.getName().startsWith(".")) {
+				
+				String adjustedPath = node.getAbsolutePath().replace(this.rootDir.getAbsolutePath(), "");
+				TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
+				finfo.setIsDirectory(node.isDirectory());
+				toc.add(finfo);
+				tocQueue.add(finfo);
+				tocInfosGenerated++; // increment for logging
 			}
-		} 
+			
+			if (node.exists() && !node.getName().startsWith(".") && node.isDirectory()) {
+				for (File n : node.listFiles()) {
+					scanNode(n,toc,tocQueue);
+				}
+			}
+			
+		} catch(Throwable e) {
+			logger.error("Permission issue? scanNode(node:"+(node != null? (" path:"+node.getAbsolutePath() +" isDirectory():"+node.isDirectory() + " exists:"+node.exists()): "NULL") + 
+								  " toc: " + (toc != null? toc.size(): "NULL") + 
+								  " tocQueue:"+(tocQueue != null ? tocQueue.size() : " NULL"));
+			
+			throw new Exception("scanNode() " + e.getMessage(),e);
+		}
 	}
 
 }
