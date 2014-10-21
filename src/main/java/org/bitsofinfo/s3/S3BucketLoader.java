@@ -2,6 +2,7 @@ package org.bitsofinfo.s3;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.util.Properties;
 
 import org.apache.log4j.Logger;
@@ -21,6 +22,9 @@ public class S3BucketLoader {
 		
 			Properties props = new Properties();
 			String confPath = System.getProperty("configFilePath");
+			
+			logger.info("System file.encoding: " + System.getProperty("file.encoding"));
+			logger.info("System charset: " + Charset.defaultCharset().name());
 			
 			InputStream input = null;
 			try {
