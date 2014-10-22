@@ -333,6 +333,16 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	private void configureTocGenerator(SourceTOCGenerator generator, Properties props) throws Exception {
 		if (generator instanceof DirectoryCrawler) {
 			((DirectoryCrawler)generator).setRootDir(new File(props.getProperty("tocGenerator.source.dir").toString()));
+			
+			String lastModFilterStr = props.getProperty("tocGenerator.lastModifiedAtGreaterThanFilter");
+			
+			if (lastModFilterStr != null) {
+				((DirectoryCrawler)generator).setLastModifiedAtGreaterThanFilter(
+						new SimpleDateFormat("yyyy-MM-dd").parse(lastModFilterStr).getTime());
+				
+				logger.debug("SourceTOCGenerator DirectoryCrawler: will filter files where last modified at is > " + lastModFilterStr);
+			}
+			
 		}
 	}
 	

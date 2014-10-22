@@ -22,6 +22,7 @@ public class DirectoryCrawler implements SourceTOCGenerator, Runnable {
 	private File rootDir = null;
 	private boolean running = true;
 	private int tocInfosGenerated = 0;
+	private long lastModifiedAtGreaterThanFilter = -1;
 	
 	public DirectoryCrawler() {}
 	
@@ -65,6 +66,15 @@ public class DirectoryCrawler implements SourceTOCGenerator, Runnable {
 			if (node.exists() && !node.getName().startsWith(".")) {
 				
 				String adjustedPath = node.getAbsolutePath().replace(this.rootDir.getAbsolutePath(), "");
+				
+				if (node.isFile()) {
+					if (this.lastModifiedAtGreaterThanFilter > 0) {
+						if (node.lastModified() < this.lastModifiedAtGreaterThanFilter) {
+							return; // do nothing, file is older than our filter...
+						}
+					}
+				}
+				
 				TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
 				finfo.setIsDirectory(node.isDirectory());
 				toc.add(finfo);
@@ -85,6 +95,14 @@ public class DirectoryCrawler implements SourceTOCGenerator, Runnable {
 			
 			throw new Exception("scanNode() " + e.getMessage(),e);
 		}
+	}
+
+	public long getLastModifiedAtGreaterThanFilter() {
+		return lastModifiedAtGreaterThanFilter;
+	}
+
+	public void setLastModifiedAtGreaterThanFilter(long lastModifiedAtGreaterThanFilter) {
+		this.lastModifiedAtGreaterThanFilter = lastModifiedAtGreaterThanFilter;
 	}
 
 }
