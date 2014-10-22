@@ -30,7 +30,6 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.Instance;
-import com.amazonaws.services.ec2.model.InstanceState;
 import com.amazonaws.services.ec2.model.InstanceStatus;
 import com.amazonaws.services.ec2.model.Tag;
 import com.google.gson.Gson;
@@ -478,7 +477,17 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 					// purge the TOCQueue
 					this.purgeTOCQueueContents();
 					
+					
+				// if any current summaries contain Write Monitor ERRORs, just dump a warning for those IPs
+				} else if (workerRegistry.anyWorkerCurrentSummaryWritesContainWriteMonitorErrors()) {
+					for (String workerIp : workerRegistry.getWorkerHostIPsWithWriteMonitorErrors()) {
+						int total = workerRegistry.getWorkerByIP(workerIp).getTotalWriteMonitorErrors();
+						logger.warn("WORKER: " + workerIp + " reports " + total + " WriteMonitorErrors...");
+					}
 				}
+				
+				
+				
 			} catch(Exception e) {
 				logger.error("handlePayload() error in WRITE reaction to current" +
 						" summaries received with ERRORS over control channel " + e.getMessage(),e);

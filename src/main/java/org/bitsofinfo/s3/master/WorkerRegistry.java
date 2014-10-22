@@ -200,6 +200,27 @@ public class WorkerRegistry {
 		return false;
 	}
 	
+	public boolean anyWorkerCurrentSummaryWritesContainWriteMonitorErrors() {
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.writeCurrentSummaryHasWriteMonitorErrors()) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	public Set<String> getWorkerHostIPsWithWriteMonitorErrors() {
+		Set<String> ips = new HashSet<String>();
+		for (WorkerInfo wi : registry.values()) {
+			if (wi.writeCurrentSummaryHasWriteMonitorErrors()) {
+				ips.add(wi.getIP());
+			}
+		}
+		
+		return ips;
+	}
+	
 	public boolean anyWorkerValidationsContainErrors() {
 		for (WorkerInfo wi : registry.values()) {
 			if (wi.validationSummaryHasFailures()) {

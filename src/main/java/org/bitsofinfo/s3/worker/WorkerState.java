@@ -1,7 +1,9 @@
 package org.bitsofinfo.s3.worker;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.bitsofinfo.s3.cmd.TocPathOpResult;
 import org.bitsofinfo.s3.control.CCMode;
@@ -11,6 +13,7 @@ public class WorkerState {
 	private String workerHostSourceId = null;
 	private String workerIP = null;
 	private CCMode currentMode = null;
+	private Set<WriteMonitorError> writeMonitorErrors = new HashSet<WriteMonitorError>();
 	private List<TocPathOpResult> tocPathsErrorsTolerated = new ArrayList<TocPathOpResult>();
 	private List<TocPathOpResult> tocPathsWritten = new ArrayList<TocPathOpResult>();
 	private List<TocPathOpResult> tocPathsValidated =new ArrayList<TocPathOpResult>();
@@ -25,6 +28,9 @@ public class WorkerState {
 	
 	public String getWorkerHostSourceId() {
 		return workerHostSourceId;
+	}
+	public int getTotalWriteMonitorErrors() {
+		return writeMonitorErrors.size();
 	}
 	public int getTotalWritesOK() {
 		return tocPathsWritten.size();
@@ -48,6 +54,10 @@ public class WorkerState {
 	
 	public void setCurrentMode(CCMode mode) {
 		this.currentMode = mode;
+	}
+	
+	public synchronized void addWriteMonitorErrors(Set<WriteMonitorError> errors) {
+		this.writeMonitorErrors.addAll(errors);
 	}
 	
 	public synchronized void addTocPathErrorTolerated(TocPathOpResult path) {
@@ -86,6 +96,10 @@ public class WorkerState {
 
 	public List<TocPathOpResult> getTocPathsErrorsTolerated() {
 		return tocPathsErrorsTolerated;
+	}
+	
+	public Set<WriteMonitorError> getWriteMonitorErrors() {
+		return writeMonitorErrors;
 	}
 
 	public void setTocPathsWriteFailures(

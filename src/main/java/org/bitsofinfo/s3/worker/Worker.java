@@ -47,7 +47,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	private String awsSecretKey = null;
 	private WorkerState myWorkerState = null;
 	private Gson gson = new Gson();
+	
 	private WriteMonitor writeMonitor = null;
+	private WriteErrorMonitor writeErrorMonitor = null;
 	private WriteBackoffMonitor writeBackoffMonitor = null;
 	
 	private Properties properties = null;
@@ -85,6 +87,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			// backoff monitor (optional)
 			initWriteBackoffMonitor(props);
+
+			// error monitor (optional)
+			initWriteErrorMonitor(props);
 	
 			// spawn control channel
 			controlChannel = new ControlChannel(false, awsAccessKey, awsSecretKey, snsControlTopicName, userAccountPrincipalId, userARN, this);
@@ -165,6 +170,20 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		}
 	}
 	
+	private void initWriteErrorMonitor(Properties props) throws Exception {
+		String writeErrorMonitorClass = props.getProperty("worker.write.error.monitor.class");
+		if (writeErrorMonitorClass != null) {
+			logger.debug("Attempting to create WriteErrorMonitor: " + writeErrorMonitorClass);
+			this.writeErrorMonitor = (WriteErrorMonitor)Class.forName(writeErrorMonitorClass).newInstance();
+			
+			if (writeErrorMonitor instanceof Yas3fsS3UploadMonitor) {
+				Yas3fsS3UploadMonitor m = (Yas3fsS3UploadMonitor)writeErrorMonitor;
+				m.setCheckEveryMS(Long.valueOf(props.getProperty("worker.write.error.monitor.yas3fs.checkEveryMS")));
+				m.setPathToLogFile(props.getProperty("worker.write.error.monitor.yas3fs.logFilePath"));
+			}
+		}
+	}
+	
 	public void startConsuming() {
 		tocQueueConsumersArePaused = false;
 		for (TOCQueue consumer : tocQueueConsumers) {
@@ -191,6 +210,15 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		try { 
 			writeMonitor.destroy();
 		} catch(Exception ignore){}
+		
+		try { 
+			writeBackoffMonitor.destroy();
+		} catch(Exception ignore){}
+		
+		try { 
+			writeErrorMonitor.destroy();
+		} catch(Exception ignore){}
+		
 		
 		try { 
 			controlChannel.destroy();
@@ -269,6 +297,10 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						if (this.writeBackoffMonitor != null) {
 							this.writeBackoffMonitor.start();
 						}
+						
+						if (this.writeErrorMonitor != null) {
+							this.writeErrorMonitor.start();
+						}
 					
 					// we have existing threads, resume consumption
 					} else {
@@ -285,6 +317,9 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					if (this.writeBackoffMonitor != null) {
 						this.writeBackoffMonitor.destroy();
 					}
+					if (this.writeErrorMonitor != null) {
+						this.writeErrorMonitor.destroy();
+					}
 				}
 				
 				// if now in REPORT_ERRORS mode...
@@ -298,6 +333,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					errorReport.failedValidates = myWorkerState.getTocPathValidateFailures();
 					errorReport.failedWrites = myWorkerState.getTocPathsWriteFailures();
 					errorReport.errorsTolerated = myWorkerState.getTocPathsErrorsTolerated();
+					errorReport.writeMonitorErrors = myWorkerState.getWriteMonitorErrors();
 				
 					// convert to json
 					String errorReportJson = new GsonBuilder().setPrettyPrinting().create().toJson(errorReport);
@@ -416,6 +452,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 														   myWorkerState.getTotalWritesOK(), 
 														   myWorkerState.getTotalWritesFailed(), 
 														   myWorkerState.getTotalErrorsTolerated(),
+														   myWorkerState.getTotalWriteMonitorErrors(),
 														   myWorkerState.getTotalWritesProcessed());
 	
 			return gson.toJson(writeSummary);
@@ -427,6 +464,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 															  myWorkerState.getTotalValidatesOK(), 
 					   									  	  myWorkerState.getTotalValidatesFailed(), 
 					   									  	  myWorkerState.getTotalErrorsTolerated(),
+					   									  	  myWorkerState.getTotalWriteMonitorErrors(),
 					   									  	  myWorkerState.getTotalValidationsProcessed());
 
 			return gson.toJson(validateSummary);

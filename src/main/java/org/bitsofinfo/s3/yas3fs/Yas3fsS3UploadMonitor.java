@@ -2,12 +2,18 @@ package org.bitsofinfo.s3.yas3fs;
 
 import java.io.File;
 import java.io.RandomAccessFile;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Stack;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.worker.WriteBackoffMonitor;
+import org.bitsofinfo.s3.worker.WriteMonitorError;
+import org.bitsofinfo.s3.worker.WriteErrorMonitor;
 import org.bitsofinfo.s3.worker.WriteMonitor;
 
 /**
@@ -20,7 +26,7 @@ import org.bitsofinfo.s3.worker.WriteMonitor;
  * @author bitsofinfo
  *
  */
-public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor, Runnable {
+public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor, WriteErrorMonitor, Runnable {
 	
 	private static final Logger logger = Logger.getLogger(Yas3fsS3UploadMonitor.class);
 
@@ -32,11 +38,20 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 	private Thread monitorThread = null;
 	private String latestLogTail = null;
 	
+	private SimpleDateFormat logDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
+	
 	private Integer backoffWhenTotalS3Uploads = 10;
 	
 	private Stack<Integer> s3UploadCounts = new Stack<Integer>();
 	
 	public Yas3fsS3UploadMonitor() {}
+	
+	
+	public Yas3fsS3UploadMonitor(String pathToLogFile, long checkEveryMS) {
+		this.pathToLogFile = pathToLogFile;	
+		this.checkEveryMS = checkEveryMS;
+	}
+	
 	
 	public Yas3fsS3UploadMonitor(String pathToLogFile, long checkEveryMS, int isIdleWhenNZeroUploads) {
 		this.pathToLogFile = pathToLogFile;	
@@ -67,7 +82,7 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 				Thread.currentThread().sleep(this.checkEveryMS);
 				
 				RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
-				byte[] buffer = new byte[10240]; // read ~10k
+				byte[] buffer = new byte[20480]; // read ~20k
 				if (file.length() >= buffer.length) {
 					file.seek(file.length()-buffer.length);
 				}
@@ -163,4 +178,30 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 		this.backoffWhenTotalS3Uploads = backoffWhenTotalS3Uploads;
 	}
 
+	@Override
+	public Set<WriteMonitorError> getWriteErrors() {
+		Set<WriteMonitorError> errs = new HashSet<WriteMonitorError>();
+		
+		if (this.latestLogTail != null) {
+			
+			try {
+				Pattern errorPatterns = Pattern.compile("(\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}:\\d{1,2},\\d{3})\\s+(ERROR.*)");
+				Matcher m = errorPatterns.matcher(this.latestLogTail);
+
+				while (m.find()) {
+				    String date = m.group(1).trim();
+				    Date timestamp = logDateFormat.parse(date);
+				    String msg = m.group(2).trim();
+				    errs.add(new WriteMonitorError(timestamp,msg));
+				    
+				}
+			} catch(Exception e) {
+				logger.error("getWriteErrors() unexpected error attempting to parse Yas3fs log file for ERRORs: " + e.getMessage(),e);
+			}
+			
+		}
+		
+		return errs;
+	}
+	
 }

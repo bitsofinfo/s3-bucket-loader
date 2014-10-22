@@ -22,6 +22,7 @@ public class WorkerInfo {
 	private int totalValidated = 0;
 	private int totalWriteFailures = 0;
 	private int totalValidateFailures = 0;
+	private int totalWriteMonitorErrors = 0;
 	
 	private Map<Date,CCPayload> payloadsReceived = new HashMap<Date,CCPayload>();
 	private List<CCPayload> orderedPayloadsReceived = new ArrayList<CCPayload>();
@@ -47,6 +48,9 @@ public class WorkerInfo {
 	}
 	public int getTotalValidated() {
 		return totalValidated;
+	}
+	public int getTotalWriteMonitorErrors() {
+		return totalWriteMonitorErrors;
 	}
 	
 	public CCMode getCurrentMode() {
@@ -75,12 +79,14 @@ public class WorkerInfo {
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalWritten = writeSummary.total;
 			this.totalWriteFailures = writeSummary.failed;
+			this.totalWriteMonitorErrors = writeSummary.writeMonitorErrors;
 		}
 		
 		if (payload.type == CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY) {
 			ResultSummary validateSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalValidated = validateSummary.total;
 			this.totalValidateFailures = validateSummary.failed;
+			this.totalWriteMonitorErrors = validateSummary.writeMonitorErrors;
 		}
 		
 		
@@ -88,12 +94,14 @@ public class WorkerInfo {
 			ResultSummary validateSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalValidated = validateSummary.total;
 			this.totalValidateFailures = validateSummary.failed;
+			this.totalWriteMonitorErrors = validateSummary.writeMonitorErrors;
 		}
 		
 		if (payload.type == CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY) {
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			this.totalWritten = writeSummary.total;
 			this.totalWriteFailures = writeSummary.failed;
+			this.totalWriteMonitorErrors = writeSummary.writeMonitorErrors;
 		}
 	}
 	
@@ -164,11 +172,37 @@ public class WorkerInfo {
 	}
 	
 	
+	/**
+	 * NOTE! this only checks for write summary "failed" > 0
+	 * 
+	 * It does NOT check for writeSummary 'writeMonitorErrors'
+	 * 
+	 * @return
+	 */
 	public boolean writeCurrentSummaryHasFailures() {
 		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
 			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			if (writeSummary.failed > 0) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
+	/**
+	 * NOTE! this only checks for write summary "writeMonitorErrors" > 0
+	 * 
+	 * It does NOT check for writeSummary 'failed'
+	 * 
+	 * @return
+	 */
+	public boolean writeCurrentSummaryHasWriteMonitorErrors() {
+		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
+			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
+			if (writeSummary.writeMonitorErrors > 0) {
 				return true;
 			}
 		}
