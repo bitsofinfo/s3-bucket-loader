@@ -520,6 +520,12 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 							continue;
 						}
 						
+						// final of update write error monitor if exists
+						if (this.writeErrorMonitor != null) {
+							this.myWorkerState.addWriteMonitorErrors(
+									this.writeErrorMonitor.getWriteErrors());
+						}
+						
 						String asJson = getResultsSummaryAsJSON(MODE.WRITE);
 						
 						// pause
@@ -535,6 +541,15 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						
 					// not finished but lets send a CURRENT_SUMMARY, if necessary
 					} else {
+						
+						// update write error monitor if exists
+						if (this.writeErrorMonitor != null) {
+							this.myWorkerState.addWriteMonitorErrors(
+									this.writeErrorMonitor.getWriteErrors());
+						}
+						
+						
+						// build/send the summary
 						long now = System.currentTimeMillis();;
 						if ((now - this.currentSummaryLastSentAtMS) > this.sendCurrentSummariesEveryMS) {
 							// send out our summary
@@ -558,6 +573,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 								}
 							}
 						} 
+
 					}
 				}
 				

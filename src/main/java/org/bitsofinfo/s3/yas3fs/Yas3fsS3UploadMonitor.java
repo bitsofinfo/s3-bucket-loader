@@ -82,7 +82,7 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 				Thread.currentThread().sleep(this.checkEveryMS);
 				
 				RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
-				byte[] buffer = new byte[20480]; // read ~20k
+				byte[] buffer = new byte[32768]; // read ~32k
 				if (file.length() >= buffer.length) {
 					file.seek(file.length()-buffer.length);
 				}
@@ -182,6 +182,8 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 	public Set<WriteMonitorError> getWriteErrors() {
 		Set<WriteMonitorError> errs = new HashSet<WriteMonitorError>();
 		
+		logger.debug("getWriteErrors() checking for errors in Yas3fs logfile....");
+		
 		if (this.latestLogTail != null) {
 			
 			try {
@@ -192,11 +194,14 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 				    String date = m.group(1).trim();
 				    Date timestamp = logDateFormat.parse(date);
 				    String msg = m.group(2).trim();
+				    
+				    logger.debug("getWriteErrors() found Yas3FSError: " + date + " msg: " + msg);
 				    errs.add(new WriteMonitorError(timestamp,msg));
 				    
 				}
 			} catch(Exception e) {
-				logger.error("getWriteErrors() unexpected error attempting to parse Yas3fs log file for ERRORs: " + e.getMessage(),e);
+				logger.error("getWriteErrors() unexpected error attempting" +
+						" to parse Yas3fs log file for ERRORs: " + e.getMessage(),e);
 			}
 			
 		}
