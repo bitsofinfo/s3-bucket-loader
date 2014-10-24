@@ -6,9 +6,9 @@ import java.util.Queue;
 import java.util.Random;
 
 import org.apache.log4j.Logger;
-import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
+import org.bitsofinfo.s3.toc.TocInfo;
 
 public class TocInfoQueueSender implements Runnable {
 	

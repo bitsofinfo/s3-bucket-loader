@@ -154,7 +154,7 @@ public class Ec2Util {
 		return statuses.iterator().next();
 	}
 	
-	public void dumpEc2InstanceStatus(AmazonEC2Client ec2Client, List<Instance> ec2Instances) {
+	public List<String> dumpEc2InstanceStatus(AmazonEC2Client ec2Client, List<Instance> ec2Instances) {
 		try {
 			List<String> instanceIds = new ArrayList<String>();
 			
@@ -168,6 +168,8 @@ public class Ec2Util {
 			
 			List<InstanceStatus> statuses = result.getInstanceStatuses();
 			
+			List<String> impairedInstances = new ArrayList<String>();
+			
 			StringBuffer sb = new StringBuffer("EC2 worker instance STATUS:\n");
 			for (InstanceStatus status : statuses) {
 				sb.append("\tid:"+status.getInstanceId() + 
@@ -175,11 +177,19 @@ public class Ec2Util {
 						"\tstate:" + status.getInstanceState().getName() + 
 						"\tstatus:" + status.getInstanceStatus().getStatus() + 
 						"\tsystem_status: " + status.getSystemStatus().getStatus() + "\n"); 
+				
+				if (status.getInstanceStatus().getStatus().equalsIgnoreCase("impaired")) {
+					impairedInstances.add(status.getInstanceId());
+				}
 			}
 			
 			logger.info(sb.toString()+"\n");
+			
+			return impairedInstances;
+			
 		} catch(Exception e) {
 			logger.error("Error getting instance state: " + e.getMessage(),e);
+			return null;
 		}
 		
 	}

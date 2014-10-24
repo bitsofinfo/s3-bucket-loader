@@ -1,6 +1,7 @@
 package org.bitsofinfo.s3.worker;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,11 +10,13 @@ import java.util.Properties;
 import org.apache.commons.exec.CommandLine;
 import org.apache.commons.exec.DefaultExecutor;
 import org.apache.log4j.Logger;
+import org.bitsofinfo.s3.S3Util;
 import org.bitsofinfo.s3.control.CCMode;
 import org.bitsofinfo.s3.control.CCPayload;
 import org.bitsofinfo.s3.control.CCPayloadHandler;
 import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
+import org.bitsofinfo.s3.master.ShutdownInfo;
 import org.bitsofinfo.s3.toc.FileCopyTOCPayloadHandler;
 import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
@@ -22,7 +25,10 @@ import org.bitsofinfo.s3.toc.TOCQueue;
 import org.bitsofinfo.s3.toc.ValidatingTOCPayloadHandler;
 import org.bitsofinfo.s3.util.CompressUtil;
 import org.bitsofinfo.s3.yas3fs.Yas3fsS3UploadMonitor;
+import org.springframework.util.StringUtils;
 
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.s3.AmazonS3Client;
 import com.google.common.base.Splitter;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -61,9 +67,16 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	
 	private boolean tocQueueConsumersArePaused = false;
 	
+	private ShutdownInfo shutdownInfo = null;
+	private S3Util s3util = null;
+	private AmazonS3Client s3Client = null;
+	
+	
 	public Worker(Properties props) {
 
 		try {
+			
+			this.s3util = new S3Util();
 			
 			this.properties = props;
 			
@@ -79,6 +92,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			mode2TOCHandlerMap = initTOCPayloadHandlers(props);
 			
+			this.s3Client = new AmazonS3Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
+		
 			// handle init command
 			runInitOrDestroyCommand("initialize",props);
 			
@@ -136,6 +151,41 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			CommandLine cmdLine = CommandLine.parse(initCmd);
 			DefaultExecutor executor = new DefaultExecutor();
 			executor.execute(cmdLine, env);
+			
+		}
+	}
+
+	private void runPreValidateModeCommands(Properties props) throws Exception {
+		
+		// pre-validate command and environment vars
+		String preValCmd 		= 	props.getProperty("worker.pre.validate.cmd");
+		String preValCmdEnv 	= 	props.getProperty("worker.pre.validate.cmd.env");
+		
+		// note that either of these can reference %worker.initialize.cmd% and/or %worker.initialize.cmd.env%
+		// so we will replace them if present
+		preValCmd = StringUtils.replace(preValCmd, "%worker.initialize.cmd%", props.getProperty("worker.initialize.cmd"));
+		preValCmdEnv = StringUtils.replace(preValCmdEnv, "%worker.initialize.cmd.env%", props.getProperty("worker.initialize.cmd.env"));
+		
+		if (preValCmd != null) {
+			
+			Map<String,String> env = null;
+			if (preValCmdEnv != null) {
+				env = Splitter.on(",").withKeyValueSeparator("=").split(preValCmdEnv);
+			}
+			
+			// preValCmd can have multiple delimited by ;
+			List<String> cmdsToRun = new ArrayList<String>();
+			if (preValCmd.indexOf(";") != -1) {
+				cmdsToRun.addAll(Arrays.asList(preValCmd.split(";")));
+			}
+			
+			for (String cmd : cmdsToRun) {
+				// execute it!
+				logger.debug("Running pre.validate command: " + cmd);
+				CommandLine cmdLine = CommandLine.parse(cmd);
+				DefaultExecutor executor = new DefaultExecutor();
+				executor.execute(cmdLine, env);
+			}
 			
 		}
 	}
@@ -206,6 +256,16 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	}
 	
 	public void destroy() {
+		
+		// upload logs
+		try {
+			this.s3util.uploadToS3(this.s3Client, 
+								   this.shutdownInfo.s3LogBucketName, 
+								   this.shutdownInfo.s3LogBucketFolderRoot, 
+								   this.myWorkerState.getWorkerIP(),
+								   this.shutdownInfo.workerLogFilesToUpload);
+		} catch(Exception ignore){}
+				
 		
 		try { 
 			writeMonitor.destroy();
@@ -281,7 +341,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					
 					if (this.tocQueueConsumers.size() == 0) {
 					
-						logger.debug("CCMode switched to mode "+myWorkerState.getCurrentMode()+": Worker spawing " + totalConsumerThreads + " separate TOCQueue consumer threads...");
+						logger.debug("CCMode switched to mode "+myWorkerState.getCurrentMode()+
+								": Worker spawing " + totalConsumerThreads + " separate TOCQueue consumer threads...");
 						for (int i=0; i<totalConsumerThreads; i++) {
 							tocQueueConsumers.add(new TOCQueue(true, awsAccessKey, awsSecretKey, sqsQueueName, this));
 						}
@@ -289,22 +350,31 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 						// start the queue threads
 						this.startConsuming();
 						
-						// if we have an additional monitors configured start those too
-						if (this.writeMonitor != null) {
-							this.writeMonitor.start();
-						}
-						
-						if (this.writeBackoffMonitor != null) {
-							this.writeBackoffMonitor.start();
-						}
-						
-						if (this.writeErrorMonitor != null) {
-							this.writeErrorMonitor.start();
+						if (myWorkerState.getCurrentMode() == CCMode.WRITE) {
+							
+							// if we have an additional monitors configured start those too
+							if (this.writeMonitor != null) {
+								this.writeMonitor.start();
+							}
+							
+							if (this.writeBackoffMonitor != null) {
+								this.writeBackoffMonitor.start();
+							}
+							
+							if (this.writeErrorMonitor != null) {
+								this.writeErrorMonitor.start();
+							}
 						}
 					
 					// we have existing threads, resume consumption
 					} else {
 						this.resumeConsuming();
+						
+						if (myWorkerState.getCurrentMode() == CCMode.VALIDATE) {
+							
+							// handle pre-validate commands
+							runPreValidateModeCommands(this.properties);
+						}
 					}
 				}
 				
@@ -330,6 +400,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					
 					// build report...
 					ErrorReport errorReport = new ErrorReport();
+					errorReport.ip = myWorkerState.getWorkerIP();
+					errorReport.id = myWorkerState.getWorkerHostSourceId();
 					errorReport.failedValidates = myWorkerState.getTocPathValidateFailures();
 					errorReport.failedWrites = myWorkerState.getTocPathsWriteFailures();
 					errorReport.errorsTolerated = myWorkerState.getTocPathsErrorsTolerated();
@@ -351,6 +423,13 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		
 		// if the master tells us to shutdown
 		if (payload.type == CCPayloadType.CMD_WORKER_SHUTDOWN) {
+			
+			try {
+				this.shutdownInfo = gson.fromJson(payload.value.toString(), ShutdownInfo.class);
+			} catch(Exception e) {
+				logger.error("CMD_WORKER_SHUTDOWN recieved error attempting to parse payload value into ShutdownInfo: " + e.getMessage(),e);
+			}
+			
 			System.exit(0); // this will trigger shutdown hook
 		}
 	}
@@ -432,11 +511,19 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		 * ValidatingTOCPayloadHandler
 		 */
 		if (handler instanceof ValidatingTOCPayloadHandler) {
+			ValidatingTOCPayloadHandler vhandler = (ValidatingTOCPayloadHandler)handler;
 			
-			((ValidatingTOCPayloadHandler)handler)
-				.setTargetDirectoryRootPath(props.getProperty("tocPayloadHandler.target.dir.root"));
+			vhandler.setTargetDirectoryRootPath(props.getProperty("tocPayloadHandler.target.dir.root"));
 			
-			return handler;
+			vhandler.setValidateMode(
+					org.bitsofinfo.s3.toc.ValidatingTOCPayloadHandler.MODE.valueOf(
+							props.getProperty("tocPayloadHandler.validate.mode")));
+			
+			vhandler.setS3BucketName(props.getProperty("tocPayloadHandler.validate.s3.bucketName"));
+			
+			vhandler.setS3Client(new AmazonS3Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey)));
+			
+			return vhandler;
 		}
 		
 

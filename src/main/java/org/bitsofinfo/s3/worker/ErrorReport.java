@@ -7,6 +7,8 @@ import org.bitsofinfo.s3.cmd.TocPathOpResult;
 
 public class ErrorReport {
 
+	public String id = null;
+	public String ip = null;
 	public List<TocPathOpResult> failedWrites = null;
 	public List<TocPathOpResult> failedValidates = null;
 	public List<TocPathOpResult> errorsTolerated = null;

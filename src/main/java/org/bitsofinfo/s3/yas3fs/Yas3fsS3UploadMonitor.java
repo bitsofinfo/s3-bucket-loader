@@ -1,4 +1,4 @@
-package org.bitsofinfo.s3.yas3fs;
+	package org.bitsofinfo.s3.yas3fs;
 
 import java.io.File;
 import java.io.RandomAccessFile;
@@ -12,9 +12,9 @@ import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.worker.WriteBackoffMonitor;
-import org.bitsofinfo.s3.worker.WriteMonitorError;
 import org.bitsofinfo.s3.worker.WriteErrorMonitor;
 import org.bitsofinfo.s3.worker.WriteMonitor;
+import org.bitsofinfo.s3.worker.WriteMonitorError;
 
 /**
  * Monitors the Yas3fs log for entries like this looking for the s3_queue being zero
@@ -184,29 +184,58 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 		
 		logger.debug("getWriteErrors() checking for errors in Yas3fs logfile....");
 		
+		
+		String[] failuresToMatch = 
+				new String[]
+					{
+					// 2014-10-22 19:11:29,799 ERROR PLUGIN do_cmd_on_s3_now_w_retries FAILED
+					"(\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}:\\d{1,2},\\d{3}).+(do_cmd_on_s3_now_w_retries FAILED.*)",
+					
+					};
+		
+		
 		if (this.latestLogTail != null) {
 			
-			try {
-				Pattern errorPatterns = Pattern.compile("(\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}:\\d{1,2},\\d{3})\\s+(ERROR.*)");
-				Matcher m = errorPatterns.matcher(this.latestLogTail);
-
-				while (m.find()) {
-				    String date = m.group(1).trim();
-				    Date timestamp = logDateFormat.parse(date);
-				    String msg = m.group(2).trim();
-				    
-				    logger.debug("getWriteErrors() found Yas3FSError: " + date + " msg: " + msg);
-				    errs.add(new WriteMonitorError(timestamp,msg));
-				    
-				}
-			} catch(Exception e) {
-				logger.error("getWriteErrors() unexpected error attempting" +
-						" to parse Yas3fs log file for ERRORs: " + e.getMessage(),e);
-			}
+			for (String pattern : failuresToMatch) {
 			
+				try {
+					Pattern errorPatterns = Pattern.compile(pattern);
+					Matcher m = errorPatterns.matcher(this.latestLogTail);
+	
+					while (m.find()) {
+					    String date = m.group(1).trim();
+					    Date timestamp = logDateFormat.parse(date);
+					    String msg = m.group(2).trim();
+					    
+					    logger.debug("getWriteErrors() found Yas3FSError: " + date + " msg: " + msg);
+					    errs.add(new WriteMonitorError(timestamp,msg));
+					    
+					}
+				} catch(Exception e) {
+					logger.error("getWriteErrors() unexpected error attempting" +
+							" to parse Yas3fs log file for ERRORs: " + e.getMessage(),e);
+				}
+			}
 		}
 		
 		return errs;
 	}
+	
+	public static void main(String[] args) throws Exception {
+		Yas3fsS3UploadMonitor m = new Yas3fsS3UploadMonitor();
+		m.setCheckEveryMS(10000);
+		m.setPathToLogFile("/path/to/testyaslog.log");
+		
+		m.start();
+		
+		Set<WriteMonitorError> e = m.getWriteErrors();
+		int v = 1;
+		
+		while(true) {
+			Thread.currentThread().sleep(10000);
+		}
+	}
+	
+	
 	
 }

@@ -2,14 +2,12 @@ package org.bitsofinfo.s3.master;
 
 import java.util.Collection;
 import java.util.Queue;
-import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.toc.SourceTOCGenerator;
-import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
+import org.bitsofinfo.s3.toc.TocInfo;
 
 public class TOCGeneratorAndSender implements Runnable {
 

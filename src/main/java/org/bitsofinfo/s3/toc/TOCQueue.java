@@ -10,12 +10,12 @@ import java.util.UUID;
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 
+import com.amazonaws.AmazonClientException;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.sqs.AmazonSQSClient;
 import com.amazonaws.services.sqs.model.CreateQueueResult;
 import com.amazonaws.services.sqs.model.DeleteMessageBatchRequest;
 import com.amazonaws.services.sqs.model.DeleteMessageBatchRequestEntry;
-import com.amazonaws.services.sqs.model.DeleteMessageBatchResultEntry;
 import com.amazonaws.services.sqs.model.ListQueuesResult;
 import com.amazonaws.services.sqs.model.Message;
 import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
@@ -161,13 +161,15 @@ public class TOCQueue implements Runnable {
 			DeleteMessageBatchRequest deleteRequest = new DeleteMessageBatchRequest();
 			deleteRequest.setQueueUrl(tocQueueUrl);
 			Collection<DeleteMessageBatchRequestEntry> entries = new ArrayList<DeleteMessageBatchRequestEntry>();
-			deleteRequest.setEntries(entries);
 			for (Message msg : messages) {
-				entries.add(new DeleteMessageBatchRequestEntry().withId(msg.getMessageId()));
+				entries.add(new DeleteMessageBatchRequestEntry()
+									.withId(msg.getReceiptHandle())
+									.withReceiptHandle(msg.getReceiptHandle()));
 			}
 
 			if (entries.size() > 0) {
 				// delete batch
+				deleteRequest.setEntries(entries);
 				sqsClient.deleteMessageBatch(deleteRequest);
 			}
 			
@@ -176,6 +178,9 @@ public class TOCQueue implements Runnable {
 			
 			logger.trace("emptyTOCQueue() purging completed!");
 			return totalRemoved;
+			
+		} catch(AmazonClientException e) {
+			logger.error("Error in emptyTOCQueue() (aws error): " + e.getMessage());
 			
 		} catch(Exception e) {
 			logger.error("Error in emptyTOCQueue(): " + e.getMessage(),e);

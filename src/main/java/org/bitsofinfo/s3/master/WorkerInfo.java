@@ -5,6 +5,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Stack;
 
 import org.bitsofinfo.s3.control.CCMode;
 import org.bitsofinfo.s3.control.CCPayload;
@@ -26,6 +27,9 @@ public class WorkerInfo {
 	
 	private Map<Date,CCPayload> payloadsReceived = new HashMap<Date,CCPayload>();
 	private List<CCPayload> orderedPayloadsReceived = new ArrayList<CCPayload>();
+	
+	// by type to stack of most recent of that payload type received
+	private Map<CCPayloadType,Stack<CCPayload>> payloadType2LifoStack = new HashMap<CCPayloadType,Stack<CCPayload>>();
 	
 	private Gson gson = new Gson();
 
@@ -61,7 +65,7 @@ public class WorkerInfo {
 		this.currentMode = mode;
 	}
 	
-	public void addPayloadReceived(CCPayload payload) {
+	public synchronized void addPayloadReceived(CCPayload payload) {
 		
 		if (!payload.sourceHostId.trim().equalsIgnoreCase(this.hostId)) {
 			throw new RuntimeException("cannot add payload received for host other than what this " +
@@ -69,6 +73,15 @@ public class WorkerInfo {
 		}
 		this.payloadsReceived.put(new Date(), payload);
 		this.orderedPayloadsReceived.add(payload);
+		
+		// push onto stack
+		Stack<CCPayload> stack = this.payloadType2LifoStack.get(payload.type);
+		if (stack == null) {
+			stack = new Stack<CCPayload>();
+			this.payloadType2LifoStack.put(payload.type, stack);
+		}
+		stack.push(payload);
+		
 		
 		if (payload.type == CCPayloadType.WORKER_CURRENT_MODE) {
 			this.currentMode = CCMode.valueOf(payload.value.toString());
@@ -149,9 +162,16 @@ public class WorkerInfo {
 	
 	public boolean writeSummaryHasFailures() {
 		if (payloadReceived(CCPayloadType.WORKER_WRITES_FINISHED_SUMMARY)) {
-			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_FINISHED_SUMMARY);
+			CCPayload payload = getMostRecentPayload(CCPayloadType.WORKER_WRITES_FINISHED_SUMMARY);
+			
+			if (payload == null) {
+				return false;
+			}
+			
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
-			if (writeSummary.failed > 0) {
+			if (writeSummary.failed > 0 || 
+				writeSummary.writeMonitorErrors > 0) {
+				
 				return true;
 			}
 		}
@@ -161,7 +181,12 @@ public class WorkerInfo {
 	
 	public boolean validationSummaryHasFailures() {
 		if (payloadReceived(CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY)) {
-			CCPayload payload = getPayload(CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY);
+			CCPayload payload = getMostRecentPayload(CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY);
+			
+			if (payload == null) {
+				return false;
+			}
+			
 			ResultSummary validationsSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			if (validationsSummary.failed > 0) {
 				return true;
@@ -172,18 +197,17 @@ public class WorkerInfo {
 	}
 	
 	
-	/**
-	 * NOTE! this only checks for write summary "failed" > 0
-	 * 
-	 * It does NOT check for writeSummary 'writeMonitorErrors'
-	 * 
-	 * @return
-	 */
 	public boolean writeCurrentSummaryHasFailures() {
 		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
-			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			CCPayload payload = getMostRecentPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			
+			if (payload == null) {
+				return false;
+			}
+			
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
-			if (writeSummary.failed > 0) {
+			if (writeSummary.failed > 0 || 
+				writeSummary.writeMonitorErrors > 0) {
 				return true;
 			}
 		}
@@ -191,16 +215,14 @@ public class WorkerInfo {
 		return false;
 	}
 	
-	/**
-	 * NOTE! this only checks for write summary "writeMonitorErrors" > 0
-	 * 
-	 * It does NOT check for writeSummary 'failed'
-	 * 
-	 * @return
-	 */
 	public boolean writeCurrentSummaryHasWriteMonitorErrors() {
 		if (payloadReceived(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY)) {
-			CCPayload payload = getPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			CCPayload payload = getMostRecentPayload(CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY);
+			
+			if (payload == null) {
+				return false;
+			}
+			
 			ResultSummary writeSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			if (writeSummary.writeMonitorErrors > 0) {
 				return true;
@@ -212,7 +234,12 @@ public class WorkerInfo {
 	
 	public boolean validationCurrentSummaryHasFailures() {
 		if (payloadReceived(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY)) {
-			CCPayload payload = getPayload(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY);
+			CCPayload payload = getMostRecentPayload(CCPayloadType.WORKER_VALIDATIONS_CURRENT_SUMMARY);
+			
+			if (payload == null) {
+				return false;
+			}
+			
 			ResultSummary validationsSummary = gson.fromJson(payload.value.toString(), ResultSummary.class);
 			if (validationsSummary.failed > 0) {
 				return true;
@@ -240,21 +267,21 @@ public class WorkerInfo {
 	}
 	
 	public boolean payloadReceived(CCPayloadType type) {
-		return getPayload(type) != null;
+		return getMostRecentPayload(type) != null;
 	}
 	
-	public CCPayload getPayload(CCPayloadType type) {
-		for (CCPayload payload: payloadsReceived.values()) {
-			if (payload.type == type) {
-				return payload;
-			}
-		}
-		return null;
+	public CCPayload getMostRecentPayload(CCPayloadType type) {
 		
+		Stack<CCPayload> typeStack = this.payloadType2LifoStack.get(type);
+		if (typeStack != null && typeStack.size() > 0) {
+			return typeStack.peek();
+		}
+		
+		return null;
 	}
 	
 	public Object getPayloadValue(CCPayloadType type) {
-		CCPayload payload = getPayload(type);
+		CCPayload payload = getMostRecentPayload(type);
 		if (payload != null) {
 			return payload.value;
 		}

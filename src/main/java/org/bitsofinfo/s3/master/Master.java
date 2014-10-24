@@ -1,8 +1,12 @@
 package org.bitsofinfo.s3.master;
 
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileWriter;
+import java.io.Writer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
@@ -12,6 +16,7 @@ import java.util.Properties;
 import org.apache.commons.exec.CommandLine;
 import org.apache.log4j.Logger;
 import org.bitsofinfo.ec2.Ec2Util;
+import org.bitsofinfo.s3.S3Util;
 import org.bitsofinfo.s3.cmd.CmdResult;
 import org.bitsofinfo.s3.cmd.CommandExecutor;
 import org.bitsofinfo.s3.control.CCMode;
@@ -20,10 +25,11 @@ import org.bitsofinfo.s3.control.CCPayloadHandler;
 import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
 import org.bitsofinfo.s3.toc.DirectoryCrawler;
-import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.toc.SourceTOCGenerator;
+import org.bitsofinfo.s3.toc.TOCManifestBasedGenerator;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCQueue;
+import org.bitsofinfo.s3.toc.TocInfo;
 import org.bitsofinfo.s3.util.CompressUtil;
 
 import com.amazonaws.auth.BasicAWSCredentials;
@@ -32,6 +38,7 @@ import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceStatus;
 import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.s3.AmazonS3Client;
 import com.google.gson.Gson;
 
 
@@ -75,6 +82,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	private int tocDispatchThreadsTotal = 4;
 	
 	private Ec2Util ec2util = null;
+	private S3Util s3util = null;
 	
 	private boolean failfastOnWorkerCurrentSummaryError = false;
 	
@@ -86,11 +94,20 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	private boolean sourceEc2HostStopOnMasterShutdown = true;
 	private String sourceEc2PostStartCmd = null;
 	private String sourceEc2PreStopCmd = null;
+	
+	private boolean workerErrorReportsLogged = false;
+	private String workerErrorReportsLogFile = null;
 
+	private ShutdownInfo shutdownInfo = null;
+	private List<String> masterLogFilesToUpload = null;
+	
+	private AmazonS3Client s3Client = null;
+	
 	public Master(Properties props) {
 		
 		try {
 			this.ec2util = new Ec2Util(); 
+			this.s3util = new S3Util();
 			
 			this.props = props;
 
@@ -106,10 +123,20 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 			this.tocDispatchThreadsTotal = Integer.valueOf(props.getProperty("master.tocqueue.dispatch.threads"));
 			
 			this.failfastOnWorkerCurrentSummaryError = Boolean.valueOf(props.getProperty("master.failfast.on.worker.current.summary.error"));
+			logger.debug("failfastOnWorkerCurrentSummaryError=" + this.failfastOnWorkerCurrentSummaryError);
 			
+			/**
+			 * For worker s3 log uploads on shutdown
+			 */
+			this.shutdownInfo = new ShutdownInfo();
+			this.shutdownInfo.s3LogBucketName = props.getProperty("master.s3.log.bucket");
+			this.shutdownInfo.s3LogBucketFolderRoot = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS").format(new Date());
+			this.shutdownInfo.workerLogFilesToUpload = Arrays.asList(props.getProperty("master.s3.log.worker.files").split(","));
+			this.masterLogFilesToUpload = Arrays.asList(props.getProperty("master.s3.log.master.files").split(","));
 			
-			// connect to ec2
+			// connect to ec2 & s3
 			this.ec2Client = new AmazonEC2Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
+			this.s3Client = new AmazonS3Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
 			
 			if (props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init") != null) {
 				ec2MinutesToWait = Integer.valueOf(props.getProperty("master.workers.ec2.minutes.to.wait.for.worker.init"));
@@ -121,6 +148,8 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				this.sourceEc2PostStartCmd = props.getProperty("master.source.host.post.start.cmd");
 				this.sourceEc2PreStopCmd = props.getProperty("master.source.host.pre.stop.cmd");
 			}
+			
+			this.workerErrorReportsLogFile = props.getProperty("master.workers.error.report.logfile");
 
 			tocQueue = 		 new TOCQueue(false, awsAccessKey, awsSecretKey, sqsQueueName, null);
 			controlChannel = new ControlChannel(true, awsAccessKey, awsSecretKey, snsControlTopicName, userAccountPrincipalId, userARN, this);
@@ -261,7 +290,17 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 		
 		try {
 			// just in case
-			this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, null);
+			this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
+		} catch(Exception ignore){}
+		
+		
+		// upload logs
+		try {
+			this.s3util.uploadToS3(this.s3Client, 
+								   this.shutdownInfo.s3LogBucketName, 
+								   this.shutdownInfo.s3LogBucketFolderRoot, 
+								   "MASTER", 
+								   this.masterLogFilesToUpload);
 		} catch(Exception ignore){}
 		
 		try {
@@ -331,6 +370,8 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	}
 	
 	private void configureTocGenerator(SourceTOCGenerator generator, Properties props) throws Exception {
+		
+		// dir crawler
 		if (generator instanceof DirectoryCrawler) {
 			((DirectoryCrawler)generator).setRootDir(new File(props.getProperty("tocGenerator.source.dir").toString()));
 			
@@ -342,6 +383,14 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				
 				logger.debug("SourceTOCGenerator DirectoryCrawler: will filter files where last modified at is > " + lastModFilterStr);
 			}
+			
+		}
+		
+		// manifest reader
+		if (generator instanceof TOCManifestBasedGenerator) {
+			
+			((TOCManifestBasedGenerator)generator).setRootDir(new File(props.getProperty("tocGenerator.source.dir").toString()));
+			((TOCManifestBasedGenerator)generator).setManifestFile(new File(props.getProperty("tocGenerator.toc.manifest.file").toString()));
 			
 		}
 	}
@@ -486,17 +535,8 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 					
 					// purge the TOCQueue
 					this.purgeTOCQueueContents();
-					
-					
-				// if any current summaries contain Write Monitor ERRORs, just dump a warning for those IPs
-				} else if (workerRegistry.anyWorkerCurrentSummaryWritesContainWriteMonitorErrors()) {
-					for (String workerIp : workerRegistry.getWorkerHostIPsWithWriteMonitorErrors()) {
-						int total = workerRegistry.getWorkerByIP(workerIp).getTotalWriteMonitorErrors();
-						logger.warn("WORKER: " + workerIp + " reports " + total + " WriteMonitorErrors...");
-					}
+
 				}
-				
-				
 				
 			} catch(Exception e) {
 				logger.error("handlePayload() error in WRITE reaction to current" +
@@ -539,7 +579,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 					// dump runtime
 					dumpRuntimeInfo();
 					
-					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, null);
+					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
 				}
 
 			} catch(Exception e) {
@@ -591,39 +631,34 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 		
 		
 		// Check for REPORT_ERRORS complete
-		if (currentMode == CCMode.REPORT_ERRORS && workerRegistry.allWorkerErrorReportsAreIn()) {
+		if (currentMode == CCMode.REPORT_ERRORS && workerRegistry.allWorkerErrorReportsAreIn() && !workerErrorReportsLogged) {
 			
-			try {
+			// we only want to do this once
+			synchronized(this) {
 				
-				logger.info("All workers report REPORT_ERRORS mode completed.. dumping details and triggering system CMD_WORKER_SHUTDOWN");
-				
-				StringBuffer sb = new StringBuffer();
-				for (String worker : workerRegistry.getWorkerHostnames()) {
-					sb.append("\n--------------------------------------------------\n");
-					sb.append("WORKER: "+worker+"\n");
-					sb.append("--------------------------------------------------\n");
-					
-					WorkerInfo winfo = workerRegistry.getWorkerInfo(worker);
-					String reportPayloadValue = (String)winfo.getPayloadValue(CCPayloadType.WORKER_ERROR_REPORT_DETAILS);
-					
-					// decompress...
-					String errorReportJson = new String(CompressUtil.decompressAndB64DecodeASCIIChars(reportPayloadValue.toCharArray()));
-					
-					sb.append("\n"+errorReportJson+"\n");
-					
-					sb.append("--------------------------------------------------\n");
-					
-					logger.error(sb.toString());
+				if (workerErrorReportsLogged) {
+					return;
 				}
+			
+				// so we only do this once
+				this.workerErrorReportsLogged = true; 
 				
-				// dump runtime
-				dumpRuntimeInfo();
-				
-				// send out the shutdown..
-				this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, null);
-
-			} catch(Exception e) {
-				logger.error("handlePayload() error sending CMD_WORKER_SHUTDOWN over control channel: " + e.getMessage(),e);
+				try {
+					
+					logger.info("All workers report REPORT_ERRORS mode completed.. dumping details and triggering system CMD_WORKER_SHUTDOWN");
+					
+					// log em
+					logWorkerErrorReports();
+					
+					// dump runtime
+					dumpRuntimeInfo();
+					
+					// send out the shutdown..
+					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
+	
+				} catch(Exception e) {
+					logger.error("handlePayload() error sending CMD_WORKER_SHUTDOWN over control channel: " + e.getMessage(),e);
+				}
 			}
 			
 		// REPORT_ERRORS partially complete? dump the workers we are waiting on....
@@ -633,6 +668,91 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				waitingSB.append(awaiting+"\n");
 			}
 			logger.info(waitingSB.toString()+"\n");
+		}
+	}
+
+	private void logWorkerErrorReports() throws Exception {
+		
+		try {
+			// log file
+			Writer logWriter = null;
+			if (this.workerErrorReportsLogFile != null) {
+				try {
+					File targetFile = new File(this.workerErrorReportsLogFile);
+					if (!targetFile.exists()) {
+						targetFile.createNewFile();
+					}
+					logWriter = new BufferedWriter(new FileWriter(targetFile));
+					logger.info("Writing JSON error reports to: " + this.workerErrorReportsLogFile);
+				} catch(Exception e) {
+					logger.error("Could NOT create worker error report log file! " + workerErrorReportsLogFile);
+				}
+			}
+			
+			if (logWriter != null) {
+				try {
+					logWriter.write("{ \"errorReports\" : [");
+				} catch(Exception e) {
+					logger.error("Error writing to : " + this.workerErrorReportsLogFile + " " + e.getMessage());
+				}
+			}
+			
+			StringBuffer sb = new StringBuffer();
+			int count = 0;
+			for (String worker : workerRegistry.getWorkerHostnames()) {
+				
+				sb.append("\n--------------------------------------------------\n");
+				sb.append("WORKER: "+worker+"\n");
+				sb.append("--------------------------------------------------\n");
+				
+				WorkerInfo winfo = workerRegistry.getWorkerInfo(worker);
+				String reportPayloadValue = (String)winfo.getPayloadValue(CCPayloadType.WORKER_ERROR_REPORT_DETAILS);
+				
+				// decompress...
+				String errorReportJson = new String(CompressUtil.decompressAndB64DecodeASCIIChars(reportPayloadValue.toCharArray()));
+				
+				if (logWriter != null) {
+					try {
+						if (count > 0) {
+							logWriter.write(" , ");
+						}
+						logWriter.write(errorReportJson);
+					} catch(Exception e) {
+						logger.error("Error writing to : " + this.workerErrorReportsLogFile + " " + e.getMessage());
+					}
+				}
+				
+				sb.append("\n"+errorReportJson+"\n");
+				
+				sb.append("--------------------------------------------------\n");
+
+				if (logWriter != null) {
+					try {
+						logWriter.flush();
+					} catch(Exception e) {
+						logger.error("Error writing to : " + this.workerErrorReportsLogFile + " " + e.getMessage());
+					}
+				}
+				
+				count++;
+			}
+			
+			if (logWriter != null) {
+				try {
+					logWriter.write("] }");
+					logWriter.close();
+					logger.info("JSON error reports flushed to log file: " + this.workerErrorReportsLogFile);
+				} catch(Exception e) {
+					logger.error("Error writing to : " + this.workerErrorReportsLogFile + " " + e.getMessage());
+				}
+			}
+			
+			// flush out
+			logger.error(sb.toString());
+			
+			
+		} catch(Exception e) {
+			logger.error("logWorkerErrorReports() unexpected error: " + e.getMessage(),e);
 		}
 	}
 	
@@ -654,8 +774,17 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 			try {
 				if (this.currentMode == CCMode.INITIALIZED && workersEc2Managed) {
 					
-					ec2util.dumpEc2InstanceStatus(ec2Client,ec2Instances);
+					// dump status and get impaired instances
+					List<String> impairedInstanceIds = ec2util.dumpEc2InstanceStatus(ec2Client,ec2Instances);
 					
+					// terminate impaired instanceIds 
+					for (String instanceId : impairedInstanceIds) {
+						logger.warn("Terminating impaired EC2 instance that won't likely come up: " + instanceId);
+						ec2util.terminateEc2Instance(ec2Client, instanceId);
+						this.totalExpectedWorkers--;
+					}
+					
+					// collect those that have yet to register
 					List<String> ec2InstanceIdsNoInitializedWorker = new ArrayList<String>();
 					Map<String,String> instanceId2IP = ec2util.getPrivateIPs(ec2Instances);
 					for (String ec2InstanceId : instanceId2IP.keySet()) {
@@ -665,7 +794,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 							ec2InstanceIdsNoInitializedWorker.add(ec2InstanceId);
 						}
 					}
-					
+
 					// if its been more than ec2MinutesToWait minutes since we started and we STILL
 					// have ec2 instances that have yet to report their worker, kill THEM!
 					// and decrement expected workers so the next INITIALIZE resend by workers
@@ -676,7 +805,9 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 							
 							// issue shutdown to them only first
 							String ip = instanceId2IP.get(instanceId2term);
-							this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, ip, null);
+							this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, ip, gson.toJson(this.shutdownInfo));
+							
+							Thread.currentThread().sleep(10000);
 							
 							ec2util.terminateEc2Instance(ec2Client,instanceId2term);
 							this.totalExpectedWorkers--;
@@ -695,8 +826,10 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	
 	private void purgeTOCQueueContents() {
 		try {
-			tocQueueEmptier = new TOCQueueEmptier(this.tocQueue, this.tocDispatchThreadsTotal);
-			tocQueueEmptier.start();
+			// Disabled, can't seem to get this to work.
+			// Constantly get There should be at least one DeleteMessageBatchRequestEntry in the request.
+			//tocQueueEmptier = new TOCQueueEmptier(this.tocQueue, this.tocDispatchThreadsTotal);
+			//tocQueueEmptier.start();
 
 		} catch(Exception e) {
 			logger.error("Unexpected error purging TOC contents: "+e.getMessage(),e);

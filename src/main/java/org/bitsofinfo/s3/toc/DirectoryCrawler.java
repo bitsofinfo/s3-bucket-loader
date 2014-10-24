@@ -66,20 +66,24 @@ public class DirectoryCrawler implements SourceTOCGenerator, Runnable {
 			if (node.exists() && !node.getName().startsWith(".")) {
 				
 				String adjustedPath = node.getAbsolutePath().replace(this.rootDir.getAbsolutePath(), "");
-				
-				if (node.isFile()) {
-					if (this.lastModifiedAtGreaterThanFilter > 0) {
-						if (node.lastModified() < this.lastModifiedAtGreaterThanFilter) {
-							return; // do nothing, file is older than our filter...
+
+				// skip root dir
+				if (adjustedPath.trim().length() > 0) {
+					
+					if (node.isFile()) {
+						if (this.lastModifiedAtGreaterThanFilter > 0) {
+							if (node.lastModified() < this.lastModifiedAtGreaterThanFilter) {
+								return; // do nothing, file is older than our filter...
+							}
 						}
 					}
+	
+					TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
+					finfo.setIsDirectory(node.isDirectory());
+					toc.add(finfo);
+					tocQueue.add(finfo);
+					tocInfosGenerated++; // increment for logging
 				}
-				
-				TocInfo finfo = new TocInfo(adjustedPath, (node.isFile() ? node.length() : 0));
-				finfo.setIsDirectory(node.isDirectory());
-				toc.add(finfo);
-				tocQueue.add(finfo);
-				tocInfosGenerated++; // increment for logging
 			}
 			
 			if (node.exists() && !node.getName().startsWith(".") && node.isDirectory()) {
