@@ -24,6 +24,7 @@ public class WorkerInfo {
 	private int totalWriteFailures = 0;
 	private int totalValidateFailures = 0;
 	private int totalWriteMonitorErrors = 0;
+	private int totalPostWriteLocalValidateErrors = 0;
 	
 	private Map<Date,CCPayload> payloadsReceived = new HashMap<Date,CCPayload>();
 	private List<CCPayload> orderedPayloadsReceived = new ArrayList<CCPayload>();
@@ -93,6 +94,7 @@ public class WorkerInfo {
 			this.totalWritten = writeSummary.total;
 			this.totalWriteFailures = writeSummary.failed;
 			this.totalWriteMonitorErrors = writeSummary.writeMonitorErrors;
+			this.totalPostWriteLocalValidateErrors = writeSummary.postWriteLocalValidateErrors;
 		}
 		
 		if (payload.type == CCPayloadType.WORKER_VALIDATIONS_FINISHED_SUMMARY) {
@@ -100,6 +102,7 @@ public class WorkerInfo {
 			this.totalValidated = validateSummary.total;
 			this.totalValidateFailures = validateSummary.failed;
 			this.totalWriteMonitorErrors = validateSummary.writeMonitorErrors;
+			this.totalPostWriteLocalValidateErrors = validateSummary.postWriteLocalValidateErrors;
 		}
 		
 		
@@ -108,6 +111,7 @@ public class WorkerInfo {
 			this.totalValidated = validateSummary.total;
 			this.totalValidateFailures = validateSummary.failed;
 			this.totalWriteMonitorErrors = validateSummary.writeMonitorErrors;
+			this.totalPostWriteLocalValidateErrors = validateSummary.postWriteLocalValidateErrors;
 		}
 		
 		if (payload.type == CCPayloadType.WORKER_WRITES_CURRENT_SUMMARY) {
@@ -115,6 +119,7 @@ public class WorkerInfo {
 			this.totalWritten = writeSummary.total;
 			this.totalWriteFailures = writeSummary.failed;
 			this.totalWriteMonitorErrors = writeSummary.writeMonitorErrors;
+			this.totalPostWriteLocalValidateErrors = writeSummary.postWriteLocalValidateErrors;
 		}
 	}
 	
@@ -287,6 +292,18 @@ public class WorkerInfo {
 		}
 		return null;
 		
+	}
+
+	public int getTotalPostWriteLocalValidateErrors() {
+		return totalPostWriteLocalValidateErrors;
+	}
+
+	public int getTotalWriteFailures() {
+		return totalWriteFailures;
+	}
+
+	public int getTotalValidateFailures() {
+		return totalValidateFailures;
 	}
 
 

@@ -82,7 +82,7 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 				Thread.currentThread().sleep(this.checkEveryMS);
 				
 				RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
-				byte[] buffer = new byte[32768]; // read ~32k
+				byte[] buffer = new byte[32768 * 4]; // read ~32k
 				if (file.length() >= buffer.length) {
 					file.seek(file.length()-buffer.length);
 				}

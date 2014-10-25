@@ -289,6 +289,14 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	public void destroy() throws Exception {
 		
 		try {
+			dumpWorkerRegistryStats();
+		} catch(Exception e) {}
+		
+		try {
+			dumpRuntimeInfo();
+		} catch(Exception e) {}
+		
+		try {
 			// just in case
 			this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
 		} catch(Exception ignore){}
@@ -399,6 +407,21 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 		return (this.toc != null ? String.valueOf(this.toc.size()) : "[TBD; generation in progress] ");
 	}
 
+	private void dumpWorkerRegistryStats() {
+		
+		StringBuffer sb = new StringBuffer("\n");
+		
+		sb.append("Total TOC size: " + this.toc.size() + "\n");
+		sb.append("Total written: " + workerRegistry.getTotalWritten() + "\n");
+		sb.append("Total write failures: " + workerRegistry.getTotalWriteFailures() + "\n");
+		sb.append("Total validated: " + workerRegistry.getTotalValidated() + "\n");
+		sb.append("Total validate failures: " + workerRegistry.getTotalValidateFailures() + "\n");
+		sb.append("Total write monitor errors: " + workerRegistry.getTotalWriteMonitorErrors() + "\n");
+		sb.append("Total post-write local validate errors: " + workerRegistry.getTotalPostWriteLocalValidateErrors() + "\n");
+		sb.append("\n\n");
+		
+		logger.info(sb.toString());
+	}
 
 	public void handlePayload(CCPayload payload) {
 		
@@ -465,6 +488,8 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				// dump runtime
 				this.writesEndAt = new Date();
 				logger.info("WORKER WRITES COMPLETE:  START["+simpleDateFormat.format(writesStartAt)+"] --> END["+simpleDateFormat.format(writesEndAt)+"]");
+				
+				dumpWorkerRegistryStats();
 				
 				// were there any errors?
 				if (workerRegistry.anyWorkerWritesContainErrors()) {
@@ -556,6 +581,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				this.validationsEndAt = new Date();
 				logger.info("WORKER VALIDATIONS COMPLETE:  START["+simpleDateFormat.format(validationsStartAt)+"] --> END["+simpleDateFormat.format(validationsEndAt)+"]");
 				
+				dumpWorkerRegistryStats();
 				
 				// were there any errors?
 				if (workerRegistry.anyWorkerValidationsContainErrors()) {
@@ -653,6 +679,9 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 					// dump runtime
 					dumpRuntimeInfo();
 					
+					// final stats
+					dumpWorkerRegistryStats();
+					
 					// send out the shutdown..
 					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
 	
@@ -709,7 +738,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 				String reportPayloadValue = (String)winfo.getPayloadValue(CCPayloadType.WORKER_ERROR_REPORT_DETAILS);
 				
 				// decompress...
-				String errorReportJson = new String(CompressUtil.decompressAndB64DecodeASCIIChars(reportPayloadValue.toCharArray()));
+				String errorReportJson = new String(CompressUtil.decompressAndB64DecodeUTF8Bytes(reportPayloadValue.getBytes()));
 				
 				if (logWriter != null) {
 					try {

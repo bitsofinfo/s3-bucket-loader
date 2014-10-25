@@ -199,8 +199,12 @@ public class TOCQueue implements Runnable {
 				try {
 					ReceiveMessageRequest req = new ReceiveMessageRequest();
 					req.setQueueUrl(this.tocQueueUrl);
-					req.setVisibilityTimeout(600); // 10 minutes it will be invisible to other consumers
-					req.setMaxNumberOfMessages(10);
+					
+					// 30 minutes it will be invisible to other consumers
+					// this should be enought time for the tocPayloadHandler to
+					// complete and then we delete the message
+					req.setVisibilityTimeout(600*3); 
+					req.setMaxNumberOfMessages(1); // only one at a time..
 					
 					ReceiveMessageResult msgResult = sqsClient.receiveMessage(req);
 					List<Message> messages = msgResult.getMessages();

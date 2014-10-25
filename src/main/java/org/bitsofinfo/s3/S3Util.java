@@ -26,21 +26,38 @@ public class S3Util {
 			
 				String key = null;
 				try {
-					File toUpload = new File(file.trim());
-					if (!toUpload.exists()) {
-						logger.error("uploadToS3() cannot upload file, does not exist! " + toUpload.getAbsolutePath());
+					File item = new File(file.trim());
+					
+					if (!item.exists()) {
+						logger.error("uploadToS3() cannot upload item, does not exist! " + item.getAbsolutePath());
+						continue;
 					}
 					
-					key = s3LogBucketFolderRoot + "/" + host + "/" + toUpload.getName();
-					 
-					PutObjectRequest req = new PutObjectRequest(bucketName, key, toUpload);
-					req.setStorageClass(StorageClass.ReducedRedundancy);
-					ObjectMetadata objectMetadata = new ObjectMetadata();
-					objectMetadata.setContentType("text/plain");
-					objectMetadata.setSSEAlgorithm(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);     
-					req.setMetadata(objectMetadata);
+					// default to the one file
+					File[] allFiles = new File[]{item};
 					
-					s3Client.putObject(req);
+					if (item.isDirectory()) {
+						allFiles = item.listFiles();
+					}
+					
+					for (File toUpload : allFiles) {
+						
+						if (!toUpload.exists() || toUpload.getName().startsWith(".") || toUpload.isDirectory()) {
+							logger.error("uploadToS3() cannot upload, does not exist, starts w/ . or is a directory: " + toUpload.getAbsolutePath());
+							continue;
+						}
+					
+						key = s3LogBucketFolderRoot + "/" + host + "/" + toUpload.getName();
+						 
+						PutObjectRequest req = new PutObjectRequest(bucketName, key, toUpload);
+						req.setStorageClass(StorageClass.ReducedRedundancy);
+						ObjectMetadata objectMetadata = new ObjectMetadata();
+						objectMetadata.setContentType("text/plain");
+						objectMetadata.setSSEAlgorithm(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);     
+						req.setMetadata(objectMetadata);
+						
+						s3Client.putObject(req);
+					}
 					
 				} catch(Exception e) {
 					logger.error("uploadToS3() unexpected error uploading logs to: " +bucketName + " key:"+ key + " for " +file);

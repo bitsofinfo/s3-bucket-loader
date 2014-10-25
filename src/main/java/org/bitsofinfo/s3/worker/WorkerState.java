@@ -14,6 +14,7 @@ public class WorkerState {
 	private String workerIP = null;
 	private CCMode currentMode = null;
 	private Set<WriteMonitorError> writeMonitorErrors = new HashSet<WriteMonitorError>();
+	private List<TocPathOpResult> tocPathsPostWriteLocalValidateFailures = new ArrayList<TocPathOpResult>();
 	private List<TocPathOpResult> tocPathsErrorsTolerated = new ArrayList<TocPathOpResult>();
 	private List<TocPathOpResult> tocPathsWritten = new ArrayList<TocPathOpResult>();
 	private List<TocPathOpResult> tocPathsValidated =new ArrayList<TocPathOpResult>();
@@ -28,6 +29,9 @@ public class WorkerState {
 	
 	public String getWorkerHostSourceId() {
 		return workerHostSourceId;
+	}
+	public int getTotalPostWriteLocalValidateFailures() {
+		return tocPathsPostWriteLocalValidateFailures.size();
 	}
 	public int getTotalWriteMonitorErrors() {
 		return writeMonitorErrors.size();
@@ -70,6 +74,10 @@ public class WorkerState {
 	
 	public synchronized void addTocPathValidated(TocPathOpResult path) {
 		this.tocPathsValidated.add(path);
+	}
+	
+	public synchronized void addTocPathPostWriteLocalValidateFailure(TocPathOpResult path) {
+		this.tocPathsPostWriteLocalValidateFailures.add(path);
 	}
 	
 	public synchronized void addTocPathValidateFailure(TocPathOpResult path) {
@@ -118,6 +126,15 @@ public class WorkerState {
 
 	public String getWorkerIP() {
 		return workerIP;
+	}
+
+	public List<TocPathOpResult> getTocPathsPostWriteLocalValidateFailures() {
+		return tocPathsPostWriteLocalValidateFailures;
+	}
+
+	public void setTocPathsPostWriteLocalValidateFailures(
+			List<TocPathOpResult> tocPathsPostWriteLocalValidateFailures) {
+		this.tocPathsPostWriteLocalValidateFailures = tocPathsPostWriteLocalValidateFailures;
 	}
 	
 }

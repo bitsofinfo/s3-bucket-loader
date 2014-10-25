@@ -13,5 +13,6 @@ public class ErrorReport {
 	public List<TocPathOpResult> failedValidates = null;
 	public List<TocPathOpResult> errorsTolerated = null;
 	public Set<WriteMonitorError> writeMonitorErrors = null;
+	public List<TocPathOpResult> failedPostWriteLocalValidates = null;
 
 }

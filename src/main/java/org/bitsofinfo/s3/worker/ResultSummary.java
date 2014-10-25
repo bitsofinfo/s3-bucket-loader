@@ -7,10 +7,13 @@ public class ResultSummary {
 	public int failed;
 	public int errorsTolerated;
 	public int writeMonitorErrors;
+	public int postWriteLocalValidateErrors;
 	public int total;
 	
 	
-	public ResultSummary(boolean TOCConsumptionPaused, int ok, int failed, int errorsTolerated, int writeMonitorErrors, int total) {
+	public ResultSummary(boolean TOCConsumptionPaused, int ok, int failed, 
+			int errorsTolerated, int writeMonitorErrors, 
+			int postWriteLocalValidateErrors, int total) {
 		super();
 		this.TOCConsumptionPaused = TOCConsumptionPaused;
 		this.ok = ok;
@@ -18,5 +21,6 @@ public class ResultSummary {
 		this.errorsTolerated = errorsTolerated;
 		this.writeMonitorErrors = writeMonitorErrors;
 		this.total = total;
+		this.postWriteLocalValidateErrors = postWriteLocalValidateErrors;
 	}
 }

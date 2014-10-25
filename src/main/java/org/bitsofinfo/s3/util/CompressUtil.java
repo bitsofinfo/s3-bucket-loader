@@ -8,18 +8,10 @@ import java.util.zip.Inflater;
 import com.amazonaws.util.Base64;
 
 public class CompressUtil {
-	
-	public static byte[] asciiChars2bytes(char[] asciiChars) {
-		byte[] bytes = new byte[asciiChars.length];
-		for (int i=0; i< asciiChars.length; i++) {
-			bytes[i] = (byte)asciiChars[i];
-		}
-		return bytes;
-	}
 
-	public static char[] decompressAndB64DecodeASCIIChars(char[] b64EncodedCompressedString) throws Exception {
+	public static char[] decompressAndB64DecodeUTF8Bytes(byte[] b64EncodedCompressedBytes) throws Exception {
 
-		byte[] input = Base64.decode(asciiChars2bytes(b64EncodedCompressedString));
+		byte[] input = Base64.decode(b64EncodedCompressedBytes);
 		
 		// Compressor with highest level of compression
 	    Inflater inflater = new Inflater();
@@ -33,12 +25,12 @@ public class CompressUtil {
 	        int count = inflater.inflate(buf);
 	        stream.write(buf, 0, count);
 	    }
-	    return new String(stream.toByteArray(),"US-ASCII").toCharArray();
+	    return new String(stream.toByteArray(),"UTF-8").toCharArray();
 	}
 	
-	public static char[] compressAndB64EncodeASCIIChars(char[] str) throws Exception{
+	public static String compressAndB64EncodeUTF8Bytes(byte[] bytes) throws Exception{
 		
-		byte[] input = asciiChars2bytes(str);
+		byte[] input = bytes;
 		
 		// Compressor with highest level of compression
 	    Deflater compressor = new Deflater();
@@ -67,6 +59,6 @@ public class CompressUtil {
 	    // Get the compressed data
 	    byte[] compressedData = bos.toByteArray();
 	    
-	    return new String(Base64.encode(compressedData),"US-ASCII").toCharArray();
+	    return new String(Base64.encode(compressedData),"UTF-8");
 	}
 }

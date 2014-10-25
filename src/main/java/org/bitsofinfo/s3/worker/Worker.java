@@ -21,6 +21,7 @@ import org.bitsofinfo.s3.toc.FileCopyTOCPayloadHandler;
 import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCPayloadHandler;
+import org.bitsofinfo.s3.toc.TOCPayloadValidator;
 import org.bitsofinfo.s3.toc.TOCQueue;
 import org.bitsofinfo.s3.toc.ValidatingTOCPayloadHandler;
 import org.bitsofinfo.s3.util.CompressUtil;
@@ -257,6 +258,11 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	
 	public void destroy() {
 		
+		// kill payload handlers
+		for (TOCPayloadHandler handler : mode2TOCHandlerMap.values()) {
+			try { handler.destroy(); } catch(Exception ignore){}
+		}
+		
 		// upload logs
 		try {
 			this.s3util.uploadToS3(this.s3Client, 
@@ -368,13 +374,16 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					
 					// we have existing threads, resume consumption
 					} else {
-						this.resumeConsuming();
 						
 						if (myWorkerState.getCurrentMode() == CCMode.VALIDATE) {
 							
 							// handle pre-validate commands
 							runPreValidateModeCommands(this.properties);
 						}
+						
+						// resume!
+						this.resumeConsuming();
+
 					}
 				}
 				
@@ -406,12 +415,13 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					errorReport.failedWrites = myWorkerState.getTocPathsWriteFailures();
 					errorReport.errorsTolerated = myWorkerState.getTocPathsErrorsTolerated();
 					errorReport.writeMonitorErrors = myWorkerState.getWriteMonitorErrors();
+					errorReport.failedPostWriteLocalValidates = myWorkerState.getTocPathsPostWriteLocalValidateFailures();
 				
 					// convert to json
 					String errorReportJson = new GsonBuilder().setPrettyPrinting().create().toJson(errorReport);
 					
 					// compress...
-					String compressedPayload = new String(CompressUtil.compressAndB64EncodeASCIIChars(errorReportJson.toCharArray()));
+					String compressedPayload = new String(CompressUtil.compressAndB64EncodeUTF8Bytes(errorReportJson.getBytes("UTF-8")));
 					
 					// send to control channel
 					this.controlChannel.send(false, CCPayloadType.WORKER_ERROR_REPORT_DETAILS, compressedPayload);
@@ -480,6 +490,22 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			fcHandler.setRetriesSleepMS(Long.valueOf(props.getProperty("tocPayloadHandler.write.retries.sleep.ms")));
 			
+			
+			if (props.getProperty("tocPayloadHandler.write.post.success.validate.local.dir") != null) {
+				
+				fcHandler.setPostWriteLocalValidateRootDir(((String)props.getProperty("tocPayloadHandler.write.post.success.validate.local.dir")));
+
+				if (props.getProperty("tocPayloadHandler.write.post.success.validate.logfile") == null) {
+					throw new Exception("tocPayloadHandler.write.post.success.validate.logfile must be specified if tocPayloadHandler.write.post.success.validate.local.dir is enabled");
+				}
+				
+				fcHandler.setPostWriteLocalValidateLogFile(((String)props.getProperty("tocPayloadHandler.write.post.success.validate.logfile")));
+				
+				// set validator (note its not configured for S3! only local checks)
+				fcHandler.setTocPayloadValidator(new TOCPayloadValidator());
+				
+			}
+					
 			if (props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex") != null) {
 				fcHandler.setRsyncTolerableErrorsRegex((String)props.getProperty("tocPayloadHandler.write.rsync.tolerable.error.regex"));
 			}
@@ -540,6 +566,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 														   myWorkerState.getTotalWritesFailed(), 
 														   myWorkerState.getTotalErrorsTolerated(),
 														   myWorkerState.getTotalWriteMonitorErrors(),
+														   myWorkerState.getTotalPostWriteLocalValidateFailures(),
 														   myWorkerState.getTotalWritesProcessed());
 	
 			return gson.toJson(writeSummary);
@@ -552,6 +579,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					   									  	  myWorkerState.getTotalValidatesFailed(), 
 					   									  	  myWorkerState.getTotalErrorsTolerated(),
 					   									  	  myWorkerState.getTotalWriteMonitorErrors(),
+					   									      myWorkerState.getTotalPostWriteLocalValidateFailures(),
 					   									  	  myWorkerState.getTotalValidationsProcessed());
 
 			return gson.toJson(validateSummary);

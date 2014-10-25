@@ -62,6 +62,41 @@ public class WorkerRegistry {
 		return total;
 	}
 	
+	public int getTotalWriteFailures() {
+		int total = 0;
+		for (WorkerInfo info : registry.values()) {
+			total += info.getTotalWriteFailures();
+		}
+		return total;
+	}
+	
+	
+	public int getTotalValidateFailures() {
+		int total = 0;
+		for (WorkerInfo info : registry.values()) {
+			total += info.getTotalValidateFailures();
+		}
+		return total;
+	}
+
+	
+	public int getTotalWriteMonitorErrors() {
+		int total = 0;
+		for (WorkerInfo info : registry.values()) {
+			total += info.getTotalWriteMonitorErrors();
+		}
+		return total;
+	}
+	
+	public int getTotalPostWriteLocalValidateErrors() {
+		int total = 0;
+		for (WorkerInfo info : registry.values()) {
+			total += info.getTotalPostWriteLocalValidateErrors();
+		}
+		return total;
+	}
+	
+	
 	public int size() {
 		return registry.size();
 	}

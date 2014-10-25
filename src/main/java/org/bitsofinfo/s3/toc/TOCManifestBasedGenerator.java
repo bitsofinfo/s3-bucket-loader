@@ -52,6 +52,11 @@ public class TOCManifestBasedGenerator implements SourceTOCGenerator, Runnable {
 		BufferedReader reader = new BufferedReader(new FileReader(manifestFile));
 		String line = null;
 		while ((line = reader.readLine()) != null) {
+			
+			if (line.trim().isEmpty()) {
+				continue;
+			}
+			
 			File tocEntry = new File(rootDir.getAbsolutePath() + line.trim());
 			
 			if (tocEntry.exists()) {

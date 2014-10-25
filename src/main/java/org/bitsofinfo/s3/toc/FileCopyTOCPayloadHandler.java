@@ -1,6 +1,9 @@
 package org.bitsofinfo.s3.toc;
 
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileWriter;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -39,6 +42,14 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 	private long retriesSleepMS = 1000;
 	
 	private Gson gson = new Gson();
+	
+	private String postWriteLocalValidateRootDir = null;
+	private String postWriteLocalValidateLogFile = null;
+	private Writer postWriteLocalValidateLogFileWriter = null;
+	private File file_postWriteLocalValidateLogFile = null;
+	private TOCPayloadValidator tocPayloadValidator = null;
+	private long lastValidateLogFileFlushAt = System.currentTimeMillis();
+	private long validateLogFileFlushEveryMS = 30000;
 	
 	public FileCopyTOCPayloadHandler() {
 		this.executor = new CommandExecutor();
@@ -206,8 +217,64 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 		
 		workerState.addTocPathWritten(
 				new TocPathOpResult(payload.mode, true, targetFilePath, "mkdir + rsync + ?chown + ?chmod", asJson));
-
 		
+		
+		/**
+		 * Do a post write validate if configured
+		 */
+		doPostWriteLocalValidate(payload, workerState);
+		
+	}
+	
+	private void doPostWriteLocalValidate(TOCPayload payload, WorkerState workerState) {
+		
+		// are we setup to do post write local validate??
+		if (this.postWriteLocalValidateRootDir != null &&
+			this.postWriteLocalValidateLogFile != null &&
+			this.tocPayloadValidator != null) {
+			
+			// validate it
+			TocPathOpResult result = this.tocPayloadValidator.validateLocally(payload, this.postWriteLocalValidateRootDir);
+			
+			// only log if not successful
+			if (!result.success) {
+				
+				// log it in state
+				workerState.addTocPathPostWriteLocalValidateFailure(result);
+			
+				synchronized(this.file_postWriteLocalValidateLogFile) {
+
+					try {
+						// init writer
+						if (this.postWriteLocalValidateLogFileWriter == null) {
+							this.postWriteLocalValidateLogFileWriter = 
+									new BufferedWriter(new FileWriter(this.file_postWriteLocalValidateLogFile));
+						}
+						
+						postWriteLocalValidateLogFileWriter.write(gson.toJson(result) + "\n");
+						
+						// need to flush?
+						long now = System.currentTimeMillis();
+						if ((now - this.lastValidateLogFileFlushAt) > validateLogFileFlushEveryMS) {
+							postWriteLocalValidateLogFileWriter.flush();
+							this.lastValidateLogFileFlushAt = now;
+						}
+
+					} catch(Exception e) {
+						logger.error("doPostWriteLocalValidate() unexpected error: " + e.getMessage(),e);
+					}
+				}
+				
+			}
+		}
+	}
+	
+	public void destroy() {
+		if (this.postWriteLocalValidateLogFileWriter != null) {
+			try {
+				this.postWriteLocalValidateLogFileWriter.close();
+			} catch(Exception ignore) {}
+		}
 	}
 	
 	
@@ -340,6 +407,32 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 
 	public void setRetriesSleepMS(long retriesSleepMS) {
 		this.retriesSleepMS = retriesSleepMS;
+	}
+
+	public String getPostWriteLocalValidateRootDir() {
+		return postWriteLocalValidateRootDir;
+	}
+
+	public void setPostWriteLocalValidateRootDir(String postWriteLocalValidateRootDir) {
+		this.postWriteLocalValidateRootDir = postWriteLocalValidateRootDir;
+	}
+
+	public String getPostWriteLocalValidateLogFile() {
+		return postWriteLocalValidateLogFile;
+	}
+
+	public void setPostWriteLocalValidateLogFile(
+			String postWriteLocalValidateLogFile) {
+		this.postWriteLocalValidateLogFile = postWriteLocalValidateLogFile;
+		this.file_postWriteLocalValidateLogFile = new File(postWriteLocalValidateLogFile);
+	}
+
+	public TOCPayloadValidator getTocPayloadValidator() {
+		return tocPayloadValidator;
+	}
+
+	public void setTocPayloadValidator(TOCPayloadValidator tocPayloadValidator) {
+		this.tocPayloadValidator = tocPayloadValidator;
 	}
 	
 	
