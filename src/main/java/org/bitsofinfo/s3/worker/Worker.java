@@ -501,7 +501,11 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 					throw new Exception("tocPayloadHandler.write.post.success.validate.logfile must be specified if tocPayloadHandler.write.post.success.validate.local.dir is enabled");
 				}
 				
-				fcHandler.setPostWriteLocalValidateLogFile(((String)props.getProperty("tocPayloadHandler.write.post.success.validate.logfile")));
+				fcHandler.setPostWriteLocalValidateLogFile(
+						((String)props.getProperty("tocPayloadHandler.write.post.success.validate.logfile")));
+
+				fcHandler.setPostWriteLocalValidateSkipDirectories(
+						(Boolean.valueOf(props.getProperty("tocPayloadHandler.write.post.success.validate.skipDirectories"))));
 				
 				// set validator (note its not configured for S3! only local checks)
 				fcHandler.setTocPayloadValidator(new TOCPayloadValidator());

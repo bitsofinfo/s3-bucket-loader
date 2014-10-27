@@ -46,6 +46,7 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 	private String postWriteLocalValidateRootDir = null;
 	private String postWriteLocalValidateLogFile = null;
 	private Writer postWriteLocalValidateLogFileWriter = null;
+	private boolean postWriteLocalValidateSkipDirectories = true;
 	private File file_postWriteLocalValidateLogFile = null;
 	private TOCPayloadValidator tocPayloadValidator = null;
 	private long lastValidateLogFileFlushAt = System.currentTimeMillis();
@@ -232,6 +233,12 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 		if (this.postWriteLocalValidateRootDir != null &&
 			this.postWriteLocalValidateLogFile != null &&
 			this.tocPayloadValidator != null) {
+
+			// SKIP directories?
+			if (payload.tocInfo.isDirectory && 
+				this.postWriteLocalValidateSkipDirectories) {
+				return;
+			}
 			
 			// validate it
 			TocPathOpResult result = this.tocPayloadValidator.validateLocally(payload, this.postWriteLocalValidateRootDir);
@@ -433,6 +440,10 @@ public class FileCopyTOCPayloadHandler implements TOCPayloadHandler {
 
 	public void setTocPayloadValidator(TOCPayloadValidator tocPayloadValidator) {
 		this.tocPayloadValidator = tocPayloadValidator;
+	}
+
+	public void setPostWriteLocalValidateSkipDirectories(boolean postWriteLocalValidateSkipDirectories) {
+		this.postWriteLocalValidateSkipDirectories = postWriteLocalValidateSkipDirectories;
 	}
 	
 	
