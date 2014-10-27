@@ -1,7 +1,11 @@
 	package org.bitsofinfo.s3.yas3fs;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashSet;
@@ -10,6 +14,10 @@ import java.util.Stack;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.exec.CommandLine;
+import org.apache.commons.exec.DefaultExecutor;
+import org.apache.commons.exec.ExecuteStreamHandler;
+import org.apache.commons.io.IOUtils;
 import org.apache.log4j.Logger;
 import org.bitsofinfo.s3.worker.WriteBackoffMonitor;
 import org.bitsofinfo.s3.worker.WriteErrorMonitor;
@@ -22,6 +30,9 @@ import org.bitsofinfo.s3.worker.WriteMonitorError;
  * to monitor when the total number in s3_queue gets to high.
  * 
  * INFO entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: 1, 0, 0, 0, 0, 0
+ * 
+ * Also has the ability to monitor the number of outgoing 443 SSL connections (to S3)
+ * and can instruct to backoff if these are > that whatever the max is configured for
  *	
  * @author bitsofinfo
  *
@@ -42,14 +53,22 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 	
 	private Integer backoffWhenTotalS3Uploads = 10;
 	
+	private Integer backoffWhenTotalHTTPSConns = 10;
+	private int latestHTTPSConnTotal = 0;
+	
+	private Integer backoffWhenMultipartUploads = 2;
+	
 	private Stack<Integer> s3UploadCounts = new Stack<Integer>();
 	
-	public Yas3fsS3UploadMonitor() {}
+	public Yas3fsS3UploadMonitor() {
+		monitorThread = new Thread(this);
+	}
 	
 	
 	public Yas3fsS3UploadMonitor(String pathToLogFile, long checkEveryMS) {
 		this.pathToLogFile = pathToLogFile;	
 		this.checkEveryMS = checkEveryMS;
+		monitorThread = new Thread(this);
 	}
 	
 	
@@ -57,6 +76,7 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 		this.pathToLogFile = pathToLogFile;	
 		this.checkEveryMS = checkEveryMS;
 		this.isIdleWhenNZeroUploads = isIdleWhenNZeroUploads;
+		monitorThread = new Thread(this);
 	}
 	
 	
@@ -64,10 +84,10 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 		this.pathToLogFile = pathToLogFile;	
 		this.checkEveryMS = checkEveryMS;
 		this.backoffWhenTotalS3Uploads = backoffWhenTotalS3Uploads;
+		monitorThread = new Thread(this);
 	}
 	
 	public void start() {
-		monitorThread = new Thread(this);
 		monitorThread.start();
 	}
 	
@@ -81,18 +101,67 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 				
 				Thread.currentThread().sleep(this.checkEveryMS);
 				
-				RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
-				byte[] buffer = new byte[32768 * 4]; // read ~32k
-				if (file.length() >= buffer.length) {
-					file.seek(file.length()-buffer.length);
-				}
-				file.read(buffer, 0, buffer.length);	
-				file.close();
 				
-				this.latestLogTail = new String(buffer,"UTF-8");
+				try {
+					/**
+					 * Check the log file
+					 */
+					RandomAccessFile file = new RandomAccessFile(new File(pathToLogFile), "r");
+					byte[] buffer = new byte[32768]; // read ~32k
+					if (file.length() >= buffer.length) {
+						file.seek(file.length()-buffer.length);
+					}
+					file.read(buffer, 0, buffer.length);	
+					file.close();
+					
+					this.latestLogTail = new String(buffer,"UTF-8");
+				} catch(Exception e) {
+					logger.error("Unexpected error tailing yas3fs.log: " + this.pathToLogFile + " " + e.getMessage(),e);
+				}
+				
+				try {
+					/**
+					 * Check netstat
+					 */
+					
+					CommandLine cmdLine = new CommandLine("netstat");
+					cmdLine.addArgument("-na");
+					
+					final StringWriter stdOut = new StringWriter();
+					final StringWriter stdErr = new StringWriter();
+					DefaultExecutor executor = new DefaultExecutor();
+					executor.setStreamHandler(new ExecuteStreamHandler() {
+							public void setProcessOutputStream(InputStream is) throws IOException {IOUtils.copy(is, stdOut, "UTF-8");}
+							public void setProcessErrorStream(InputStream is) throws IOException {IOUtils.copy(is, stdErr, "UTF-8");}
+							public void stop() throws IOException {}
+							public void start() throws IOException {}
+							public void setProcessInputStream(OutputStream os) throws IOException {}
+						});
+						
+					logger.trace("Executing: " + cmdLine.toString());
+						
+					int exitValue = executor.execute(cmdLine);
+					if (exitValue > 0) {
+						logger.error("Netstat check ERROR: exitCode: "+exitValue+" cmd=" + cmdLine.toString());
+					}
+					
+					String netstatOutput = stdOut.toString();
+					Pattern netstatPattern = Pattern.compile("443\\s+ESTABLISHED");
+					Matcher netstatMatcher = netstatPattern.matcher(netstatOutput);
+					int total = 0;
+					while (netstatMatcher.find()) {
+						total += 1;
+					}
+					
+					logger.trace("Latest total of Netstat outgoing HTTPS connections = " + total);
+					this.latestHTTPSConnTotal = total;
+					
+				} catch(Exception e) {
+					logger.error("Unexpected error netstating current HTTPS conns: " + this.pathToLogFile + " " + e.getMessage(),e);
+				}
 				
 			} catch(Exception e) {
-				logger.error("Unexpected error tailing yas3fs.log: " + this.pathToLogFile + " " + e.getMessage(),e);
+				logger.error("Unexpected error: " + this.pathToLogFile + " " + e.getMessage(),e);
 			}
 		}
 	}
@@ -114,8 +183,27 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 	}
 	
 	public boolean writesShouldBackoff() {
-		int currentS3UploadSize = this.getS3UploadQueueSize();
 		
+		int currentMultipartUploads = this.getCurrentMultipartUploads();
+		int currentS3UploadSize = this.getS3UploadQueueSize();
+		logger.debug("Latest Yas3fs s3_queue size = " + currentS3UploadSize);
+		logger.debug("Latest Netstat outgoing HTTPS connections = " + latestHTTPSConnTotal);
+		logger.debug("Latest Yas3fs multipart uploads = " + currentMultipartUploads);
+		
+		if (currentMultipartUploads >= this.backoffWhenMultipartUploads) {
+			logger.debug("writesShouldBackoff() currentMultipartUploads=" + currentMultipartUploads + 
+					" and backoffWhenMultipartUploads=" + this.backoffWhenMultipartUploads);
+			return true;
+		}
+		
+		
+		if (this.latestHTTPSConnTotal >= this.backoffWhenTotalHTTPSConns) {
+			logger.debug("writesShouldBackoff() latestHTTPSConnTotal=" + latestHTTPSConnTotal + 
+					" and backoffWhenTotalHTTPSConns=" + this.backoffWhenTotalHTTPSConns);
+			return true;
+		}
+		
+
 		if (currentS3UploadSize >= this.backoffWhenTotalS3Uploads) {
 			logger.debug("writesShouldBackoff() currentS3UploadSize=" + currentS3UploadSize + 
 					" and backoffWhenTotalS3Uploads=" + this.backoffWhenTotalS3Uploads);
@@ -221,19 +309,104 @@ public class Yas3fsS3UploadMonitor implements WriteMonitor, WriteBackoffMonitor,
 		return errs;
 	}
 	
+	
+	private int getCurrentMultipartUploads() {
+		
+		if (this.latestLogTail != null) {
+
+			try {
+				String toCheck = this.latestLogTail;
+				Pattern p = Pattern.compile("\\d{4}-\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}:\\d{1,2},\\d{3}.+multipart_uploads_in_progress\\s+=\\s+(\\d+)");
+				Matcher m = p.matcher(toCheck);
+
+				int lastMpTotal = 0;
+				while (m.find()) {
+				    String mpTotal = m.group(1).trim();
+				    lastMpTotal = Integer.valueOf(mpTotal);
+				}
+				
+				return lastMpTotal;
+				
+			} catch(Exception e) {
+				logger.error("getCurrentMultipartUploads() unexpected error attempting" +
+						" to parse Yas3fs log file for multipart_uploads_in_progress: " + e.getMessage(),e);
+			}
+
+		}
+		
+		return 0;
+		
+	}
+	
 	public static void main(String[] args) throws Exception {
+		
 		Yas3fsS3UploadMonitor m = new Yas3fsS3UploadMonitor();
 		m.setCheckEveryMS(10000);
-		m.setPathToLogFile("/path/to/testyaslog.log");
+		m.setPathToLogFile("//testyaslog.log");
 		
 		m.start();
 		
-		Set<WriteMonitorError> e = m.getWriteErrors();
-		int v = 1;
+
 		
 		while(true) {
 			Thread.currentThread().sleep(10000);
+			int x = m.getCurrentMultipartUploads();
+
+			int v = 1;
 		}
+		
+		/*
+		CommandLine cmdLine = new CommandLine("netstat");
+		cmdLine.addArgument("-na");
+		
+		final StringWriter stdOut = new StringWriter();
+		final StringWriter stdErr = new StringWriter();
+		DefaultExecutor executor = new DefaultExecutor();
+		executor.setStreamHandler(new ExecuteStreamHandler() {
+				public void setProcessOutputStream(InputStream is) throws IOException {IOUtils.copy(is, stdOut, "UTF-8");}
+				public void setProcessErrorStream(InputStream is) throws IOException {IOUtils.copy(is, stdErr, "UTF-8");}
+				public void stop() throws IOException {}
+				public void start() throws IOException {}
+				public void setProcessInputStream(OutputStream os) throws IOException {}
+			});
+			
+		logger.debug("Executing: " + cmdLine.toString());
+			
+		int exitValue = executor.execute(cmdLine);
+		if (exitValue > 0) {
+			logger.error("Netstat check ERROR: exitCode: "+exitValue+" cmd=" + cmdLine.toString());
+		}
+		
+		String netstatOutput = stdOut.toString();
+		Pattern netstatPattern = Pattern.compile("443\\s+ESTABLISHED");
+		Matcher netstatMatcher = netstatPattern.matcher(netstatOutput);
+		int total = 0;
+		while (netstatMatcher.find()) {
+			total += 1;
+		}
+		
+		System.out.println(total);
+		*/
+	}
+
+
+	public Integer getBackoffWhenTotalHTTPSConns() {
+		return backoffWhenTotalHTTPSConns;
+	}
+
+
+	public void setBackoffWhenTotalHTTPSConns(Integer backoffWhenTotalSSLConns) {
+		this.backoffWhenTotalHTTPSConns = backoffWhenTotalSSLConns;
+	}
+
+
+	public Integer getBackoffWhenMultipartUploads() {
+		return backoffWhenMultipartUploads;
+	}
+
+
+	public void setBackoffWhenMultipartUploads(Integer backoffWhenMultipartUploads) {
+		this.backoffWhenMultipartUploads = backoffWhenMultipartUploads;
 	}
 	
 	

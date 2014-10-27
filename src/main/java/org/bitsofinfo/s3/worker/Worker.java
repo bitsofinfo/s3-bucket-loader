@@ -214,6 +214,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			if (writeBackoffMonitor instanceof Yas3fsS3UploadMonitor) {
 				Yas3fsS3UploadMonitor m = (Yas3fsS3UploadMonitor)writeBackoffMonitor;
+				m.setBackoffWhenMultipartUploads(Integer.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.backoffWhenMultipartUploads")));
+				m.setBackoffWhenTotalHTTPSConns(Integer.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.backoffWhenTotalHTTPSConns")));
 				m.setBackoffWhenTotalS3Uploads(Integer.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.backoffWhenTotalS3Uploads"))); 
 				m.setCheckEveryMS(Long.valueOf(props.getProperty("worker.write.backoff.monitor.yas3fs.checkEveryMS")));
 				m.setPathToLogFile(props.getProperty("worker.write.backoff.monitor.yas3fs.logFilePath"));

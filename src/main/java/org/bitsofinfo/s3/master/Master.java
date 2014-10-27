@@ -101,7 +101,12 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	private ShutdownInfo shutdownInfo = null;
 	private List<String> masterLogFilesToUpload = null;
 	
+	private long lastStatsDumpAtMS = System.currentTimeMillis();
+	private long dumpStatsEveryMS = 60000;
+	
 	private AmazonS3Client s3Client = null;
+	
+	private long autoShutdownAfterMS = -1;
 	
 	public Master(Properties props) {
 		
@@ -124,6 +129,14 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 			
 			this.failfastOnWorkerCurrentSummaryError = Boolean.valueOf(props.getProperty("master.failfast.on.worker.current.summary.error"));
 			logger.debug("failfastOnWorkerCurrentSummaryError=" + this.failfastOnWorkerCurrentSummaryError);
+			
+			if (props.getProperty("master.auto.shutdown.after.n.minutes") != null) {
+				Integer minutes = Integer.valueOf(props.getProperty("master.auto.shutdown.after.n.minutes"));
+				if (minutes > 0) {
+					this.autoShutdownAfterMS = minutes  * (1000*60);
+					logger.debug("master.auto.shutdown.after.n.minutes (milliseconds = " + this.autoShutdownAfterMS+")");
+				}
+			}
 			
 			/**
 			 * For worker s3 log uploads on shutdown
@@ -411,7 +424,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 		
 		StringBuffer sb = new StringBuffer("\n");
 		
-		sb.append("Total TOC size: " + this.toc.size() + "\n");
+		sb.append("Total TOC size: " + (this.toc != null ? this.toc.size() : 0) + "\n");
 		sb.append("Total written: " + workerRegistry.getTotalWritten() + "\n");
 		sb.append("Total write failures: " + workerRegistry.getTotalWriteFailures() + "\n");
 		sb.append("Total validated: " + workerRegistry.getTotalValidated() + "\n");
@@ -684,6 +697,12 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 					
 					// send out the shutdown..
 					this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, gson.toJson(this.shutdownInfo));
+					
+					if (this.autoShutdownAfterMS > 0) {
+						logger.debug("System will auto-shutdown in: " + autoShutdownAfterMS + "ms " + (autoShutdownAfterMS/60000) + " (minutes)");
+						Thread.currentThread().sleep(this.autoShutdownAfterMS);
+						System.exit(0);
+					}
 	
 				} catch(Exception e) {
 					logger.error("handlePayload() error sending CMD_WORKER_SHUTDOWN over control channel: " + e.getMessage(),e);
@@ -698,6 +717,19 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 			}
 			logger.info(waitingSB.toString()+"\n");
 		}
+		
+		
+		try {
+			long now = System.currentTimeMillis();
+			if ((now - lastStatsDumpAtMS) > this.dumpStatsEveryMS) {
+				dumpWorkerRegistryStats();
+				this.lastStatsDumpAtMS = System.currentTimeMillis();
+			}
+		} catch(Exception e) {
+			logger.error("Error calling dumpWorkerRegistryStats() " + e.getMessage(),e);
+		}
+		
+		
 	}
 
 	private void logWorkerErrorReports() throws Exception {
@@ -833,7 +865,9 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 						for (String instanceId2term : ec2InstanceIdsNoInitializedWorker) {
 							
 							// issue shutdown to them only first
+							
 							String ip = instanceId2IP.get(instanceId2term);
+							logger.debug("Sending CMD_WORKER_SHUTDOWN targeted ONLY for worker ip: " + ip);
 							this.controlChannel.send(true, CCPayloadType.CMD_WORKER_SHUTDOWN, ip, gson.toJson(this.shutdownInfo));
 							
 							Thread.currentThread().sleep(10000);
