@@ -21,9 +21,9 @@ This is a multi-threaded Java program that can be launched in two modes `master`
 
 4. Once the master sees all of its workers in INITIALIZED state, the master changes the state to WRITE
 
-5. The master begins creating the TOC (consisting of filepath and size), and sends a SQS message for each file to the TOC queue.
+5. The master begins creating the TOC (consisting of filepath, isDirectory and size), and sends a SQS message for each file to the TOC queue.
 
-6. Workers begin consuming TOC messages off the queue and execute rsyncs from the source -> destination. As workers are consuming they periodly send CURRENT SUMMARY updates to the master. If `failfast` is configured and any failures are detected the master can switch the cluster to ERROR_REPORT mode immediately (see below).
+6. Workers begin consuming TOC messages off the queue and execute rsyncs (or cp) from the source -> destination. As workers are consuming they periodly send CURRENT SUMMARY updates to the master. If `failfast` is configured and any failures are detected the master can switch the cluster to ERROR_REPORT mode immediately (see below). Depending on the handler, they can also do chowns, chmods etc. 
 
 7. When workers are complete, they publish their WRITE SUMMARY and go into an IDLE state
 
@@ -31,7 +31,7 @@ This is a multi-threaded Java program that can be launched in two modes `master`
   * If no errors, the master transitions to the VALIDATE state, and sends the TOC to the queue again
   * If errors the master transitions to the ERROR_REPORT state, and requests error details from the workers
 
-9. In VALIDATE state, all workers consume TOC file paths from the SQS queue and attempt to verify the file exists and its sizes matches the expected size. When complete they go into IDLE state and publish their VALIDATE SUMMARY
+9. In VALIDATE state, all workers consume TOC file paths from the SQS queue and attempt to verify the file exists and its sizes matches the expected TOC size (locally and/or s3 object metat-data calls). When complete they go into IDLE state and publish their VALIDATE SUMMARY
 
 10. After receiving all VALIDATE SUMMARYs from the workers
   * If no errors, the master issues a shutdown command to all workers, then optionally terminates all instances
