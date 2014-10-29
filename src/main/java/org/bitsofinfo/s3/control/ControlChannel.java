@@ -218,6 +218,7 @@ public class ControlChannel implements Runnable {
 			try {
 				
 				ReceiveMessageRequest req = new ReceiveMessageRequest();
+				req.setWaitTimeSeconds(10);
 				req.setMaxNumberOfMessages(10);
 				req.setVisibilityTimeout(300);
 				req.setQueueUrl(sqsQueueUrl);

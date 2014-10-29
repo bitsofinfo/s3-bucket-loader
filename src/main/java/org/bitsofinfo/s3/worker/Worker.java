@@ -747,15 +747,27 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		int threadsThatQualify = 0;
 		for (TOCQueue tocQueue : this.tocQueueConsumers) {
 			
-			// not even connected/ready yet
-			if (tocQueue.getLastMsgReceivedTimeMS() == -1) {
+			// not even connected/ready yet, it has not even
+			// made at least 60 requests to get messages (which)
+			// would be about at least one minute
+			if (tocQueue.getTotalMessageRequestsMade() < 60) {
 				continue;
 			}
 			
 			long lastMsgReceivedAtMS = (System.currentTimeMillis() - tocQueue.getLastMsgReceivedTimeMS());
+			
 			if (!tocQueue.isPaused() &&
 				!tocQueue.isCurrentlyProcessingMessage() && 
-				lastMsgReceivedAtMS >= this.declareWorkerIdleAtMinLastMsgReceivedMS) {
+				
+				(
+				    // has processed at least one message and has not done another past our allowed idle time
+					(tocQueue.getTotalMessagesProcessed() > 0 && lastMsgReceivedAtMS >= this.declareWorkerIdleAtMinLastMsgReceivedMS) 
+						||
+					// or just has never processed a message, this can happen if too many consumer threads
+					// some won't process any messages
+					(tocQueue.getTotalMessagesProcessed() == 0) 
+					
+				)) {
 				
 				threadsThatQualify++;
 			}

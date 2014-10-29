@@ -43,6 +43,7 @@ public class TOCQueue implements Runnable {
 	
 	private long lastSQSMessageReceivedMS = -1;
 	private int totalMessagesProcessed = 0;
+	private int totalMessageRequestsMade = 0;
 	private boolean currentlyProcessingMessage = false;
 	
 	public TOCQueue(boolean isConsumer, String awsAccessKey, String awsSecretKey, String sqsQueueName, TOCPayloadHandler tocPayloadHandler) throws Exception {
@@ -87,6 +88,7 @@ public class TOCQueue implements Runnable {
 	
 	public void resumeConsuming() {
 		this.lastSQSMessageReceivedMS = System.currentTimeMillis(); // set to now.
+		this.totalMessageRequestsMade = 0; // reset to zero
 		this.paused = false;
 	}
 	
@@ -197,7 +199,10 @@ public class TOCQueue implements Runnable {
 			
 			if (!this.paused) {
 				try {
+					this.totalMessageRequestsMade++;
+					
 					ReceiveMessageRequest req = new ReceiveMessageRequest();
+					req.setWaitTimeSeconds(10);
 					req.setQueueUrl(this.tocQueueUrl);
 					
 					// 30 minutes it will be invisible to other consumers
@@ -322,6 +327,10 @@ public class TOCQueue implements Runnable {
 
 	public boolean isCurrentlyProcessingMessage() {
 		return currentlyProcessingMessage;
+	}
+
+	public int getTotalMessageRequestsMade() {
+		return this.totalMessageRequestsMade;
 	}
 
 }
