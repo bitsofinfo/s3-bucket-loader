@@ -56,7 +56,10 @@ public class S3KeyCopyingTOCPayloadHandler implements ProgressListener, TOCPaylo
 																  tocInfo.path);
 			copyRequest.setStorageClass(storageClass);
 			// copyRequest.setGeneralProgressListener(this);
-			copyRequest.putCustomRequestHeader("x-amz-server-side-encryption", "AES256");
+			
+			if (this.enableServerSideEncryption) {
+				copyRequest.putCustomRequestHeader("x-amz-server-side-encryption", "AES256");
+			}
 			
 			CopyObjectResult copyResult = s3Client.copyObject(copyRequest);
 			
