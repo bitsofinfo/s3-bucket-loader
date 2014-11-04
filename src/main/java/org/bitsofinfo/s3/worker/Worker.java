@@ -18,6 +18,7 @@ import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
 import org.bitsofinfo.s3.master.ShutdownInfo;
 import org.bitsofinfo.s3.toc.FileCopyTOCPayloadHandler;
+import org.bitsofinfo.s3.toc.S3KeyCopyingTOCPayloadHandler;
 import org.bitsofinfo.s3.toc.TOCPayload;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
 import org.bitsofinfo.s3.toc.TOCPayloadHandler;
@@ -30,6 +31,7 @@ import org.springframework.util.StringUtils;
 
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.StorageClass;
 import com.google.common.base.Splitter;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -67,6 +69,7 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 	private long currentSummaryLastSentAtMS = -1;
 	
 	private boolean tocQueueConsumersArePaused = false;
+	private int consumerThreadMinRequestsBeforeIdle = 60;
 	
 	private ShutdownInfo shutdownInfo = null;
 	private S3Util s3util = null;
@@ -91,10 +94,12 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			
 			this.totalConsumerThreads = 	Integer.valueOf(props.getProperty("worker.toc.consumer.threads.num"));
 			
-			mode2TOCHandlerMap = initTOCPayloadHandlers(props);
+			this.consumerThreadMinRequestsBeforeIdle = Integer.valueOf(props.getProperty("worker.toc.consumer.threads.min.requests.before.idle"));
 			
 			this.s3Client = new AmazonS3Client(new BasicAWSCredentials(this.awsAccessKey, this.awsSecretKey));
-		
+			
+			mode2TOCHandlerMap = initTOCPayloadHandlers(props);
+
 			// handle init command
 			runInitOrDestroyCommand("initialize",props);
 			
@@ -558,8 +563,24 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 			return vhandler;
 		}
 		
+		/**
+		 * S3KeyCopyingTOCPayloadHandler
+		 */
+		if (handler instanceof S3KeyCopyingTOCPayloadHandler) {
+			
+			S3KeyCopyingTOCPayloadHandler fcHandler = (S3KeyCopyingTOCPayloadHandler)handler;
+			
+			fcHandler.setS3Client(this.s3Client);
+			fcHandler.setSourceS3BucketName(props.getProperty("tocPayloadHandler.write.s3keyCopy.sourceS3BucketName").toString());
+			fcHandler.setTargetS3BucketName(props.getProperty("tocPayloadHandler.write.s3keyCopy.targetS3BucketName").toString());
+			fcHandler.setEnableServerSideEncryption(Boolean.valueOf(props.getProperty("tocPayloadHandler.write.s3keyCopy.enableServerSideEncryption")));
+			fcHandler.setStorageClass(StorageClass.valueOf(props.getProperty("tocPayloadHandler.write.s3keyCopy.storageClass")));
+			
+			return fcHandler;
+		}
+		
 
-		throw new Exception("initTOCPayloadHandler() invalid tocPayloadHandler.class");
+		throw new Exception("initTOCPayloadHandler() invalid tocPayloadHandler.class " + className);
 
 	}
 	
@@ -748,9 +769,8 @@ public class Worker implements TOCPayloadHandler, CCPayloadHandler, Runnable {
 		for (TOCQueue tocQueue : this.tocQueueConsumers) {
 			
 			// not even connected/ready yet, it has not even
-			// made at least 60 requests to get messages (which)
-			// would be about at least one minute
-			if (tocQueue.getTotalMessageRequestsMade() < 60) {
+			// made at least 'consumerThreadMinRequestsBeforeIdle' requests to get messages 
+			if (tocQueue.getTotalMessageRequestsMade() < this.consumerThreadMinRequestsBeforeIdle) {
 				continue;
 			}
 			

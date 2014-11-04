@@ -25,6 +25,7 @@ import org.bitsofinfo.s3.control.CCPayloadHandler;
 import org.bitsofinfo.s3.control.CCPayloadType;
 import org.bitsofinfo.s3.control.ControlChannel;
 import org.bitsofinfo.s3.toc.DirectoryCrawler;
+import org.bitsofinfo.s3.toc.S3BucketObjectLister;
 import org.bitsofinfo.s3.toc.SourceTOCGenerator;
 import org.bitsofinfo.s3.toc.TOCManifestBasedGenerator;
 import org.bitsofinfo.s3.toc.TOCPayload.MODE;
@@ -72,7 +73,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 	private AmazonEC2Client ec2Client = null;
 	private List<Instance> ec2Instances = null;
 	
-	private SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+	private SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
 	private SimpleDateFormat ec2TagSimpleDateFormat = new SimpleDateFormat("yyyyMMdd_HHmmss");
 	
 	private Thread masterMonitor = null;
@@ -279,7 +280,7 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 		}
 
 		
-		if (!new File(props.getProperty("tocGenerator.source.dir")).exists()) {
+		if (props.getProperty("tocGenerator.source.dir") != null && !new File(props.getProperty("tocGenerator.source.dir")).exists()) {
 			throw new Exception("'tocGenerator.source.dir' does not exist! " + props.getProperty("tocGenerator.source.dir"));
 		}
 		
@@ -414,6 +415,15 @@ public class Master implements CCPayloadHandler, Runnable, TOCGenerationEventHan
 			((TOCManifestBasedGenerator)generator).setManifestFile(new File(props.getProperty("tocGenerator.toc.manifest.file").toString()));
 			
 		}
+		
+		// s3 bucket reader
+		if (generator instanceof S3BucketObjectLister) {
+			((S3BucketObjectLister)generator).setS3BucketName(props.getProperty("tocGenerator.source.s3.bucketName").toString());
+			((S3BucketObjectLister)generator).setS3Client(this.s3Client);
+			
+		}
+		
+		logger.debug("SourceTOCGenerator = " + generator.getClass().getName());
 	}
 	
 	private String getTocSizeInfo() {

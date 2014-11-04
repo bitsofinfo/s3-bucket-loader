@@ -13,7 +13,7 @@ import com.amazonaws.services.s3.model.StorageClass;
 public class S3Util {
 	
 	private static final Logger logger = Logger.getLogger(S3Util.class);
-	
+
 	public void uploadToS3(AmazonS3Client s3Client, 
 						  String bucketName, 
 						  String s3LogBucketFolderRoot, 
