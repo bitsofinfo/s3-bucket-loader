@@ -17,7 +17,9 @@ over 800k files totaling roughly 600gb in under 8 hours. This program has also b
 buckets to secondary 'backup' buckets in under an hour.
 
 
-![Alt text](/diagram.png "Diagram")
+![Alt text](/diagram1.png "Diagram1")
+
+![Alt text](/diagram2.png "Diagram2")
 
 ## How it works
 
